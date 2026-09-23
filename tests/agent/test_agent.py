@@ -209,3 +209,16 @@ def test_api_errors_raise_agent_error_and_leave_history_untouched():
     agent.ask("q2")
 
     assert client.requests[1]["messages"] == [{"role": "user", "content": "q2"}]
+
+
+def test_total_input_tokens_include_cached_tokens():
+    from prestie.agent.agent import Usage
+
+    usage = Usage(
+        input_tokens=4,
+        output_tokens=700,
+        cache_read_input_tokens=1228,
+        cache_creation_input_tokens=5781,
+    )
+
+    assert usage.total_input_tokens == 4 + 1228 + 5781

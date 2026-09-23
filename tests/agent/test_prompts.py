@@ -39,3 +39,17 @@ def test_system_prompt_is_deterministic_for_prompt_caching():
     player = PlayerContext(level=80)
 
     assert build_system_prompt(player) == build_system_prompt(player)
+
+
+def test_system_prompt_restricts_general_knowledge_to_stable_game_concepts():
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    assert "general knowledge" in prompt
+    assert "patch" in prompt
+
+
+def test_system_prompt_asks_to_match_answer_depth_to_the_question():
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    assert "beginner" in prompt
+    assert "short" in prompt

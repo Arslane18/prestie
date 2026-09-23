@@ -89,3 +89,20 @@ def test_retrieval_failure_is_returned_as_error_result():
 
     assert outcome.is_error
     assert "voyage down" in outcome.content
+
+
+def test_every_content_type_is_described_to_the_model():
+    description = SEARCH_TOOL["input_schema"]["properties"]["content_type"][
+        "description"
+    ]
+
+    for content_type in {page.content_type for page in BLOOD_DK_PAGES}:
+        assert f"{content_type}:" in description
+
+
+def test_content_type_filter_is_presented_as_a_second_attempt():
+    description = SEARCH_TOOL["input_schema"]["properties"]["content_type"][
+        "description"
+    ]
+
+    assert "without" in description.lower()

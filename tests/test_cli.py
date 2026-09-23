@@ -205,7 +205,7 @@ def test_chat_verbose_prints_token_usage(fake_agent, capsys):
     cli.main(["chat", "--level", "80", "-q", "q", "--verbose"])
 
     out = capsys.readouterr().out
-    assert "1200" in out
+    assert "2100" in out  # total input = 1200 uncached + 900 read from cache
     assert "900" in out
 
 
