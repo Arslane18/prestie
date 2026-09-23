@@ -3,10 +3,15 @@
 import argparse
 import sys
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import anthropic
 import chromadb
 
+from prestie.agent.agent import Agent, AgentError, AgentReply, ToolCall
+from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
+from prestie.agent.tools import KnowledgeBaseTool
 from prestie.config import ConfigError, Settings, load_settings
 from prestie.evaluation.retrieval import (
     CaseResult,
@@ -39,6 +44,7 @@ DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
 SNIPPET_CHARS = 300
 EVAL_QUESTION_CHARS = 60
 EVAL_SECTION_CHARS = 55
+EXIT_COMMANDS = frozenset({"exit", "quit", "q"})
 KNOWLEDGE_ERRORS = (
     ConfigError,
     EmbeddingError,
@@ -65,6 +71,26 @@ def open_store(settings: Settings, *, reset: bool = False) -> KnowledgeStore:
 
 def open_retriever(settings: Settings) -> Retriever:
     return Retriever(build_embedder(settings), open_store(settings))
+
+
+def build_agent(
+    settings: Settings,
+    player: PlayerContext,
+    on_tool_call: Callable[[ToolCall], None],
+) -> Agent:
+    try:
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    except anthropic.AnthropicError as exc:
+        raise ConfigError(
+            "No Anthropic credentials: set ANTHROPIC_API_KEY in .env"
+        ) from exc
+    return Agent(
+        client,
+        model=settings.claude_model,
+        system_prompt=build_system_prompt(player),
+        tool=KnowledgeBaseTool(open_retriever(settings)),
+        on_tool_call=on_tool_call,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,6 +134,13 @@ def _build_parser() -> argparse.ArgumentParser:
     evaluation.add_argument("--cases", type=Path, default=DEFAULT_EVAL_CASES)
     evaluation.add_argument("-k", type=int, default=DEFAULT_RESULTS)
     evaluation.set_defaults(handler=_eval)
+
+    chat = commands.add_parser("chat", help="Ask the Blood DK assistant (Claude + RAG)")
+    chat.add_argument("--level", type=int, required=True, help="Character level")
+    chat.add_argument("--hero-talent", choices=HERO_TALENTS)
+    chat.add_argument("-q", "--question", help="Ask one question and exit")
+    chat.add_argument("--verbose", action="store_true", help="Show token usage")
+    chat.set_defaults(handler=_chat)
     return parser
 
 
@@ -204,6 +237,63 @@ def _format_case(result: CaseResult) -> str:
 
 def _truncate(text: str, width: int) -> str:
     return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def _chat(args: argparse.Namespace) -> int:
+    try:
+        player = PlayerContext(level=args.level, hero_talent=args.hero_talent)
+        agent = build_agent(load_settings(), player, on_tool_call=_print_tool_call)
+    except (ValueError, *KNOWLEDGE_ERRORS) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    one_shot = args.question is not None
+    if not one_shot:
+        print(f"Prestie — {player.describe()}. Tape 'exit' pour quitter.")
+    for question in [args.question] if one_shot else _read_questions():
+        try:
+            reply = agent.ask(question)
+        except AgentError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            if one_shot:
+                return 1
+            continue
+        print(_format_reply(reply, verbose=args.verbose))
+    return 0
+
+
+def _read_questions() -> Iterator[str]:
+    while True:
+        try:
+            line = input("\ntoi> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if line.lower() in EXIT_COMMANDS:
+            return
+        if line:
+            yield line
+
+
+def _print_tool_call(call: ToolCall) -> None:
+    content_type = call.input.get("content_type")
+    scope = f" [{content_type}]" if content_type else ""
+    print(f"  [recherche] {call.input.get('query', '?')}{scope}")
+
+
+def _format_reply(reply: AgentReply, *, verbose: bool) -> str:
+    lines = [f"\nprestie> {reply.text}"]
+    if reply.truncated:
+        lines.append("[réponse tronquée : limite de tokens atteinte]")
+    if verbose:
+        usage = reply.usage
+        lines.append(
+            f"[tokens] entrée: {usage.input_tokens} "
+            f"(cache lu: {usage.cache_read_input_tokens}, "
+            f"cache écrit: {usage.cache_creation_input_tokens}) "
+            f"· sortie: {usage.output_tokens} · recherches: {len(reply.tool_calls)}"
+        )
+    return "\n".join(lines)
 
 
 def _format_hit(rank: int, hit: SearchHit) -> str:
