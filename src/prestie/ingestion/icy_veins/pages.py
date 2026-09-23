@@ -29,4 +29,5 @@ BLOOD_DK_PAGES: tuple[GuidePage, ...] = (
     GuidePage("blood-death-knight-pve-tank-spec-builds-talents", "talents"),
     GuidePage("blood-death-knight-pve-tank-spell-summary", "mechanics"),
     GuidePage("blood-death-knight-pve-tank-easy-mode", "beginner"),
+    GuidePage("blood-death-knight-pve-tank-mythic-plus-tips", "mythic_plus"),
 )
