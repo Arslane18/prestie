@@ -42,3 +42,20 @@ def test_blank_key_counts_as_missing():
 
 def test_repr_never_leaks_the_key():
     assert "secret" not in repr(load_settings({"VOYAGE_API_KEY": "secret"}))
+
+
+def test_claude_settings_default_to_opus_and_optional_key():
+    settings = load_settings({})
+
+    assert settings.claude_model == "claude-opus-5"
+    assert settings.anthropic_api_key is None
+
+
+def test_claude_settings_are_read_from_environment():
+    settings = load_settings(
+        {"ANTHROPIC_API_KEY": "sk-ant-x", "ANTHROPIC_MODEL": "claude-sonnet-5"}
+    )
+
+    assert settings.anthropic_api_key == "sk-ant-x"
+    assert settings.claude_model == "claude-sonnet-5"
+    assert "sk-ant-x" not in repr(settings)

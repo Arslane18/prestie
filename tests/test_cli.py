@@ -153,3 +153,74 @@ def test_eval_with_malformed_cases_fails_cleanly(knowledge_env, tmp_path, capsys
 
     assert exit_code == 1
     assert "expected a JSON list" in capsys.readouterr().err
+
+
+class FakeAgent:
+    def __init__(self, on_tool_call):
+        self.on_tool_call = on_tool_call
+        self.questions: list[str] = []
+
+    def ask(self, question):
+        from prestie.agent.agent import AgentReply, ToolCall, Usage
+
+        self.questions.append(question)
+        call = ToolCall(name="search_knowledge_base", input={"query": "stat priority"})
+        self.on_tool_call(call)
+        return AgentReply(
+            text="Priorité : Hâte.",
+            tool_calls=(call,),
+            usage=Usage(
+                input_tokens=1200, output_tokens=80, cache_read_input_tokens=900
+            ),
+        )
+
+
+@pytest.fixture
+def fake_agent(monkeypatch):
+    created = {}
+
+    def build(settings, player, on_tool_call):
+        created["player"] = player
+        created["agent"] = FakeAgent(on_tool_call)
+        return created["agent"]
+
+    monkeypatch.setattr(cli, "build_agent", build)
+    return created
+
+
+def test_chat_one_shot_prints_searches_and_answer(fake_agent, capsys):
+    exit_code = cli.main(
+        ["chat", "--level", "80", "--hero-talent", "San'layn", "-q", "Quelles stats ?"]
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert fake_agent["agent"].questions == ["Quelles stats ?"]
+    assert fake_agent["player"].hero_talent == "San'layn"
+    assert "stat priority" in out
+    assert "Priorité : Hâte." in out
+
+
+def test_chat_verbose_prints_token_usage(fake_agent, capsys):
+    cli.main(["chat", "--level", "80", "-q", "q", "--verbose"])
+
+    out = capsys.readouterr().out
+    assert "1200" in out
+    assert "900" in out
+
+
+def test_chat_interactive_loop_until_exit(fake_agent, monkeypatch, capsys):
+    answers = iter(["Question 1", "", "exit"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+
+    exit_code = cli.main(["chat", "--level", "80"])
+
+    assert exit_code == 0
+    assert fake_agent["agent"].questions == ["Question 1"]
+
+
+def test_chat_rejects_invalid_level(fake_agent, capsys):
+    exit_code = cli.main(["chat", "--level", "500", "-q", "q"])
+
+    assert exit_code == 1
+    assert "level" in capsys.readouterr().err
