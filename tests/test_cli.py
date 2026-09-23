@@ -1,11 +1,16 @@
+from datetime import UTC, datetime
+
 import httpx
 import pytest
 
 from prestie import cli
-from prestie.ingestion.icy_veins.cache import HtmlCache
+from prestie.ingestion.icy_veins.cache import CachedPage, HtmlCache
 from prestie.ingestion.icy_veins.pages import BLOOD_DK_PAGES
+from tests.ingestion.icy_veins.html_fixtures import heading
+from tests.ingestion.icy_veins.html_fixtures import page as html_page
 
 ROBOTS_TXT = "User-agent: *\nAllow: /\n"
+FETCHED_AT = datetime(2026, 9, 23, 10, 0, tzinfo=UTC)
 
 
 def fake_client(status_code: int = 200) -> httpx.Client:
@@ -50,3 +55,101 @@ def test_scrape_reports_failure_with_non_zero_exit(tmp_path, monkeypatch, capsys
 
     assert exit_code == 1
     assert "503" in capsys.readouterr().err
+
+
+class FakeEmbedder:
+    model = "fake-model"
+
+    def embed_documents(self, texts):
+        return [[1.0, float(len(text) % 7)] for text in texts]
+
+    def embed_query(self, text):
+        return [1.0, 0.0]
+
+
+@pytest.fixture
+def knowledge_env(tmp_path, monkeypatch):
+    """Cache every MVP page with synthetic HTML and point the store at tmp_path."""
+    cache = HtmlCache(tmp_path / "raw")
+    for page in BLOOD_DK_PAGES:
+        html = html_page(heading(2, "1.", "Stats", "stats") + f"<p>{page.slug}</p>")
+        cache.put(CachedPage(page.slug, page.url, html, FETCHED_AT, 200))
+    monkeypatch.setenv("PRESTIE_CHROMA_DIR", str(tmp_path / "chroma"))
+    monkeypatch.setenv("VOYAGE_MODEL", FakeEmbedder.model)
+    monkeypatch.setattr(cli, "build_embedder", lambda settings: FakeEmbedder())
+    return tmp_path / "raw"
+
+
+def test_ingest_indexes_every_cached_page(knowledge_env, capsys):
+    exit_code = cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert out.count("1 sections -> 1 chunks") == len(BLOOD_DK_PAGES)
+    assert f"{len(BLOOD_DK_PAGES)} chunks indexed" in out
+
+
+def test_search_prints_ranked_hits_with_source(knowledge_env, capsys):
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    capsys.readouterr()
+
+    exit_code = cli.main(["search", "stat priority", "-k", "2"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert out.count("https://www.icy-veins.com/wow/") == 2
+    assert "Stats" in out
+
+
+def test_search_can_filter_by_content_type(knowledge_env, capsys):
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    capsys.readouterr()
+
+    cli.main(["search", "anything", "--content-type", "leveling"])
+
+    out = capsys.readouterr().out
+    assert "blood-death-knight-leveling-guide" in out
+    assert "stat-priority" not in out
+
+
+def test_ingest_without_api_key_fails_cleanly(knowledge_env, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "build_embedder", cli.build_voyage_embedder)
+    monkeypatch.setenv("VOYAGE_API_KEY", "")
+
+    exit_code = cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+
+    assert exit_code == 1
+    assert "VOYAGE_API_KEY" in capsys.readouterr().err
+
+
+def test_eval_prints_per_question_ranks_and_summary(knowledge_env, tmp_path, capsys):
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        '[{"question": "leveling?", "expected": ["blood-death-knight-leveling-guide"]},'
+        ' {"question": "out of scope?", "expected": []}]',
+        encoding="utf-8",
+    )
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    capsys.readouterr()
+
+    exit_code = cli.main(
+        ["eval", "--cases", str(cases), "-k", str(len(BLOOD_DK_PAGES))]
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "leveling?" in out
+    assert "n/a" in out
+    assert "hit@1 =" in out
+    assert "MRR =" in out
+    assert "(1 answerable questions" in out
+
+
+def test_eval_with_malformed_cases_fails_cleanly(knowledge_env, tmp_path, capsys):
+    cases = tmp_path / "cases.json"
+    cases.write_text('{"not": "a list"}', encoding="utf-8")
+
+    exit_code = cli.main(["eval", "--cases", str(cases)])
+
+    assert exit_code == 1
+    assert "expected a JSON list" in capsys.readouterr().err
