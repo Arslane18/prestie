@@ -20,6 +20,33 @@ SEARCH_TOOL_NAME = "search_knowledge_base"
 RESULTS_PER_SEARCH = 5
 MAX_QUERY_CHARS = 500
 CONTENT_TYPES = tuple(sorted({page.content_type for page in BLOOD_DK_PAGES}))
+# What each guide page holds, so the model can pick a filter knowingly.
+# A page type missing here fails at import time, on purpose.
+CONTENT_TYPE_DESCRIPTIONS = {
+    "beginner": "simplified 'easy mode' guide: basic rotation, beginner talents, "
+    "basic stat priority",
+    "leveling": "leveling from 8 to 90: leveling rotation by level, heirlooms, "
+    "leveling talents",
+    "mechanics": "spell glossary: what every ability and talent does",
+    "mythic_plus": "Mythic+ dungeons: group utility (interrupts, stuns), macros, "
+    "affixes",
+    "overview": "spec overview, performance ratings, patch changes",
+    "rotation": "full expert rotation per hero talent, opener, cooldowns, threat, "
+    "runes and Runic Power",
+    "stat_priority": "secondary stat priority per hero talent, stat breakdown, "
+    "diminishing returns",
+    "talents": "talent builds for raid, Mythic+ and delves, import strings, hero "
+    "talents, PvP talents",
+}
+CONTENT_TYPE_HELP = (
+    "Optional filter on the guide page type. Search without it first: semantic "
+    "search already ranks passages across pages, and a wrong filter hides the "
+    "answer (e.g. the simplified rotation is in 'beginner', not 'rotation'). "
+    "Use it on a follow-up search when the first results missed. Page types:\n"
+    + "\n".join(
+        f"- {name}: {CONTENT_TYPE_DESCRIPTIONS[name]}" for name in CONTENT_TYPES
+    )
+)
 
 SEARCH_TOOL: dict[str, Any] = {
     "name": SEARCH_TOOL_NAME,
@@ -42,8 +69,7 @@ SEARCH_TOOL: dict[str, Any] = {
             "content_type": {
                 "type": "string",
                 "enum": list(CONTENT_TYPES),
-                "description": "Optional filter on the guide page type. Omit it "
-                "unless you are sure which page holds the answer.",
+                "description": CONTENT_TYPE_HELP,
             },
         },
         "required": ["query"],
