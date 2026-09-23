@@ -48,6 +48,15 @@ class Usage:
             **{name: getattr(usage, name, 0) or 0 for name in cls.__dataclass_fields__}
         )
 
+    @property
+    def total_input_tokens(self) -> int:
+        """`input_tokens` only counts uncached tokens; this is what Claude read."""
+        return (
+            self.input_tokens
+            + self.cache_read_input_tokens
+            + self.cache_creation_input_tokens
+        )
+
     def __add__(self, other: "Usage") -> "Usage":
         return Usage(
             **{

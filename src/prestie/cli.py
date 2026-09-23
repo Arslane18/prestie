@@ -288,9 +288,10 @@ def _format_reply(reply: AgentReply, *, verbose: bool) -> str:
     if verbose:
         usage = reply.usage
         lines.append(
-            f"[tokens] entrée: {usage.input_tokens} "
-            f"(cache lu: {usage.cache_read_input_tokens}, "
-            f"cache écrit: {usage.cache_creation_input_tokens}) "
+            f"[tokens] entrée totale: {usage.total_input_tokens} "
+            f"(lus depuis le cache: {usage.cache_read_input_tokens}, "
+            f"écrits en cache: {usage.cache_creation_input_tokens}, "
+            f"hors cache: {usage.input_tokens}) "
             f"· sortie: {usage.output_tokens} · recherches: {len(reply.tool_calls)}"
         )
     return "\n".join(lines)
