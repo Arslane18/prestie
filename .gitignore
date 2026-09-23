@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Claude 
+CLAUDE.md
+
+# Local data (raw scraped HTML, vector store)
+data/
