@@ -8,6 +8,13 @@ from pathlib import Path
 import chromadb
 
 from prestie.config import ConfigError, Settings, load_settings
+from prestie.evaluation.retrieval import (
+    CaseResult,
+    EvalCaseError,
+    EvalReport,
+    evaluate,
+    load_cases,
+)
 from prestie.ingestion.icy_veins.cache import HtmlCache
 from prestie.ingestion.icy_veins.pages import BLOOD_DK_PAGES
 from prestie.ingestion.icy_veins.parser import ParseError
@@ -19,6 +26,7 @@ from prestie.ingestion.icy_veins.scraper import (
 )
 from prestie.ingestion.pipeline import IngestError, ingest_pages
 from prestie.knowledge.embeddings import Embedder, EmbeddingError, VoyageEmbedder
+from prestie.knowledge.retriever import Retriever
 from prestie.knowledge.store import (
     DEFAULT_RESULTS,
     EmbeddingModelMismatchError,
@@ -27,11 +35,15 @@ from prestie.knowledge.store import (
 )
 
 DEFAULT_CACHE_DIR = Path("data/raw/icy-veins")
+DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
 SNIPPET_CHARS = 300
+EVAL_QUESTION_CHARS = 60
+EVAL_SECTION_CHARS = 55
 KNOWLEDGE_ERRORS = (
     ConfigError,
     EmbeddingError,
     EmbeddingModelMismatchError,
+    EvalCaseError,
     IngestError,
     ParseError,
 )
@@ -49,6 +61,10 @@ build_embedder = build_voyage_embedder  # seam replaced by a fake in tests
 def open_store(settings: Settings, *, reset: bool = False) -> KnowledgeStore:
     client = chromadb.PersistentClient(path=str(settings.chroma_dir))
     return KnowledgeStore.open(client, settings.voyage_model, reset=reset)
+
+
+def open_retriever(settings: Settings) -> Retriever:
+    return Retriever(build_embedder(settings), open_store(settings))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -85,6 +101,13 @@ def _build_parser() -> argparse.ArgumentParser:
     search.add_argument("-k", type=int, default=DEFAULT_RESULTS, dest="n_results")
     search.add_argument("--content-type", help="e.g. rotation, stat_priority")
     search.set_defaults(handler=_search)
+
+    evaluation = commands.add_parser(
+        "eval", help="Measure retrieval quality on a set of reference questions"
+    )
+    evaluation.add_argument("--cases", type=Path, default=DEFAULT_EVAL_CASES)
+    evaluation.add_argument("-k", type=int, default=DEFAULT_RESULTS)
+    evaluation.set_defaults(handler=_eval)
     return parser
 
 
@@ -127,10 +150,8 @@ def _ingest(args: argparse.Namespace) -> int:
 def _search(args: argparse.Namespace) -> int:
     where = {"content_type": args.content_type} if args.content_type else None
     try:
-        settings = load_settings()
-        store = open_store(settings)
-        query_vector = build_embedder(settings).embed_query(args.query)
-        hits = store.search(query_vector, n_results=args.n_results, where=where)
+        retriever = open_retriever(load_settings())
+        hits = retriever.search(args.query, n_results=args.n_results, where=where)
     except KNOWLEDGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -139,6 +160,50 @@ def _search(args: argparse.Namespace) -> int:
     for rank, hit in enumerate(hits, start=1):
         print(_format_hit(rank, hit))
     return 0
+
+
+def _eval(args: argparse.Namespace) -> int:
+    try:
+        cases = load_cases(args.cases)
+        retriever = open_retriever(load_settings())
+        report = evaluate(cases, retriever.search, k=args.k)
+    except KNOWLEDGE_ERRORS as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(_format_report(report))
+    return 0
+
+
+def _format_report(report: EvalReport) -> str:
+    lines = [f"{'rank':>4}  {'question':<{EVAL_QUESTION_CHARS}}  top result (distance)"]
+    lines.extend(_format_case(result) for result in report.results)
+    cutoffs = sorted({1, 3, report.k})
+    rates = " | ".join(f"hit@{at} = {report.hit_rate(at):.2f}" for at in cutoffs)
+    lines.append(
+        f"\n{rates} | MRR = {report.mrr:.2f}  "
+        f"({report.answerable_count} answerable questions, k={report.k})"
+    )
+    return "\n".join(lines)
+
+
+def _format_case(result: CaseResult) -> str:
+    if not result.case.answerable:
+        status = "n/a"
+    else:
+        status = str(result.rank) if result.found else "MISS"
+    question = _truncate(result.case.question, EVAL_QUESTION_CHARS)
+    top = result.hits[0] if result.hits else None
+    top_text = (
+        f"{_truncate(str(top.metadata.get('section', '?')), EVAL_SECTION_CHARS)}"
+        f" ({top.distance:.3f})"
+        if top
+        else "-"
+    )
+    return f"{status:>4}  {question:<{EVAL_QUESTION_CHARS}}  {top_text}"
+
+
+def _truncate(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: width - 1] + "…"
 
 
 def _format_hit(rank: int, hit: SearchHit) -> str:

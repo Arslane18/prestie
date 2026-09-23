@@ -1,0 +1,132 @@
+[
+  {
+    "question": "quelle stat secondaire privilégier en DK sang ?",
+    "expected": [
+      "blood-death-knight-pve-tank-stat-priority#wowsanlaynht-stat-priority",
+      "blood-death-knight-pve-tank-stat-priority#wowdeathbringerht-stat-priority",
+      "blood-death-knight-pve-tank-stat-priority#specspec-specclass-stat-priority",
+      "blood-death-knight-pve-tank-easy-mode#stat-priority-for-specspec-specclass"
+    ]
+  },
+  {
+    "question": "je dois jouer comment mon DK sang ? Plutôt offensif ou defensif ?",
+    "expected": [
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#specspec-specclass-gameplay-and-rotation-guide"
+    ],
+    "note": "FAQ 'Should I Play Defensively or Offensively?'"
+  },
+  {
+    "question": "le DK sang rentre facilement dans une compo de donjon ?",
+    "expected": [
+      "blood-death-knight-pve-tank-mythic-plus-tips",
+      "blood-death-knight-pve-tank-guide#blood-death-knight-overview"
+    ],
+    "note": "Utility kit (M+ page) or the Mythic+ performance rating (overview)"
+  },
+  {
+    "question": "c'est quoi les meilleures classes pour accompagner un DK sang ?",
+    "expected": [],
+    "note": "Not covered by any ingested page: the agent must say it does not know"
+  },
+  {
+    "question": "c'est quoi la rota basique du DK sang ?",
+    "expected": [
+      "blood-death-knight-pve-tank-easy-mode#basic-rotation-for-specspec-specclass",
+      "blood-death-knight-leveling-guide#leveling-rotation"
+    ]
+  },
+  {
+    "question": "Comment fonctionne le Bone Shield ?",
+    "expected": [
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#bone-shield"
+    ]
+  },
+  {
+    "question": "Quand est-ce que je dois utiliser Sang vampirique ?",
+    "expected": [
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#vampiric-blood"
+    ],
+    "note": "French spell name (Vampiric Blood): cross-lingual entity matching"
+  },
+  {
+    "question": "Quel build de talents pour le raid en San'layn ?",
+    "expected": [
+      "blood-death-knight-pve-tank-spec-builds-talents#wowsanlaynht-raid-build"
+    ]
+  },
+  {
+    "question": "Tu as un code d'import de talents pour les clés mythiques en San'layn ?",
+    "expected": [
+      "blood-death-knight-pve-tank-spec-builds-talents#best-linkcurrentexpansion-talents-for-specspec-specclass",
+      "blood-death-knight-pve-tank-spec-builds-talents#wowsanlaynht-mythic-build"
+    ],
+    "note": "Import strings live in the parent section, not in the build subsection"
+  },
+  {
+    "question": "Comment gérer mes runes et ma puissance runique ?",
+    "expected": [
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#runes-and-runic-power",
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#runes",
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#runic-power"
+    ]
+  },
+  {
+    "question": "Qu'est-ce qui a changé pour le DK sang au patch 12.1 ?",
+    "expected": [
+      "blood-death-knight-pve-tank-guide#patch-12-1-changes",
+      "blood-death-knight-pve-tank-guide#class-changes",
+      "blood-death-knight-pve-tank-guide#talent-changes",
+      "blood-death-knight-pve-tank-guide#bugfixes-and-bugs"
+    ]
+  },
+  {
+    "question": "Quels objets d'héritage équiper pour monter de niveau ?",
+    "expected": [
+      "blood-death-knight-leveling-guide#leveling-gear-options"
+    ]
+  },
+  {
+    "question": "Comment marche la menace et le taunt quand on tank ?",
+    "expected": [
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#threat",
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#how-threat-tables-works",
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#threat-is-damage",
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#taunting"
+    ]
+  },
+  {
+    "question": "Comment gérer l'affixe Pulsar en clé mythique ?",
+    "expected": [
+      "blood-death-knight-pve-tank-mythic-plus-tips#pulsar-affix-management-for-specspec-specclass"
+    ]
+  },
+  {
+    "question": "Quelle macro utiliser pour interrompre avec Mind Freeze ?",
+    "expected": [
+      "blood-death-knight-pve-tank-mythic-plus-tips#interrupts-stuns-and-stops"
+    ]
+  },
+  {
+    "question": "Les rendements décroissants sur les stats secondaires, ça marche comment ?",
+    "expected": [
+      "blood-death-knight-pve-tank-stat-priority#diminishing-returns-on-stats"
+    ]
+  },
+  {
+    "question": "Comment jouer Deathbringer en AoE ?",
+    "expected": [
+      "blood-death-knight-pve-tank-rotation-cooldowns-abilities#rotation"
+    ]
+  },
+  {
+    "question": "Le mode Combat Assistant, ça vaut le coup en DK sang ?",
+    "expected": [
+      "blood-death-knight-pve-tank-easy-mode#combat-assistant-viability-for-specspec-specclass"
+    ]
+  },
+  {
+    "question": "Quel est le meilleur bijou (trinket) pour un DK sang ?",
+    "expected": [],
+    "note": "Gear/BiS page not ingested"
+  }
+]
