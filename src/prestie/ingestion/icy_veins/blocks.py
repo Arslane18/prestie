@@ -69,6 +69,8 @@ WOWHEAD_ID = re.compile(r"^(spell|item)=(\d+)")
 SPACE_BEFORE_PUNCTUATION = re.compile(r"\s+([,.;:!?)%])")
 SPACE_AFTER_OPEN_PAREN = re.compile(r"\(\s+")
 DEFAULT_MAX_SCORE = 5
+# Icon class of a stat-priority separator -> operator. Anything else means ">".
+STAT_OPERATORS = (("greater-equal", ">="), ("equal", "="))
 
 
 @dataclass(frozen=True)
@@ -129,6 +131,8 @@ def _walk_element(
         yield from _block(_render_faq(element, labels), [element], conditions)
     elif "export-string" in classes:
         yield from _block(_render_export_string(element), [element], conditions)
+    elif "stat-priority-widget" in classes:
+        yield from _block(_render_stat_priority(element), [element], conditions)
     elif element.name in ("ul", "ol"):
         yield from _block(
             "\n".join(_render_list(element, labels)), [element], conditions
@@ -271,12 +275,36 @@ def _render_faq(details: Tag, labels: ConditionLabels) -> str:
 
 
 def _render_export_string(details: Tag) -> str:
+    """Copy-paste widget, used both for talent import strings and for macros."""
     title = details.select_one(".export-string__title")
+    title_text = _inline_text(title.children) if title else ""
+    macro = details.select_one(".export-string__code_large_macro")
+    if macro is not None:
+        return (
+            f"Macro ({title_text or 'macro'}):\n{macro.get_text(chr(10), strip=True)}"
+        )
     code = details.select_one(".export-string__code")
     if code is None:
         return ""
-    title_text = _inline_text(title.children) if title else "talent build"
-    return f"Talent import string ({title_text}): {code.get_text(strip=True)}"
+    return (
+        f"Talent import string ({title_text or 'talent build'}): "
+        f"{code.get_text(strip=True)}"
+    )
+
+
+def _render_stat_priority(widget: Tag) -> str:
+    """The widget draws comparison operators as icons; spell them out."""
+    parts = []
+    for node in widget.select(".stat-container, .stat-separator"):
+        if "stat-separator" in _classes(node):
+            icon = node.select_one(".separator-icon")
+            icon_classes = _classes(icon) if icon else []
+            parts.append(
+                next((op for cls, op in STAT_OPERATORS if cls in icon_classes), ">")
+            )
+        elif (name := node.select_one(".stat-name")) is not None:
+            parts.append(_inline_text(name.children))
+    return " ".join(parts)
 
 
 def _render_performance(overview: Tag) -> str:
