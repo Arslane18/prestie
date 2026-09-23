@@ -177,3 +177,44 @@ def test_performance_overview_renders_one_line_per_rating():
 
 def test_empty_blocks_are_not_emitted():
     assert texts("<p>   </p><div><svg></svg></div>") == []
+
+
+def stat(name: str) -> str:
+    return (
+        '<div class="stat-container"><div class="stat-icon-name">'
+        f'<div class="stat-icon"></div><div class="stat-name">{name}</div></div></div>'
+    )
+
+
+def separator(kind: str) -> str:
+    return (
+        f'<div class="stat-separator"><div class="separator-icon {kind}">'
+        '<i class="ri-arrow-drop-right-line"></i></div></div>'
+    )
+
+
+def test_stat_priority_widget_keeps_comparison_operators():
+    html = (
+        '<div class="stat-priority-widget"><div class="stat-priority-widget-inner">'
+        + stat("Strength")
+        + separator("false")
+        + stat("Haste")
+        + separator("greater-equal")
+        + stat("Critical Strike")
+        + separator("equal")
+        + stat("Mastery")
+        + "</div></div>"
+    )
+
+    assert texts(html) == ["Strength > Haste >= Critical Strike = Mastery"]
+
+
+def test_macro_export_string_is_rendered_as_macro():
+    html = (
+        '<details class="export-string"><summary><span class="export-string__title">'
+        "Mind Freeze Macro</span></summary>"
+        '<div class="export-string__code_large_macro">/cast [@focus] Mind Freeze</div>'
+        "</details>"
+    )
+
+    assert texts(html) == ["Macro (Mind Freeze Macro):\n/cast [@focus] Mind Freeze"]
