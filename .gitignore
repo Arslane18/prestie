@@ -219,6 +219,8 @@ __marimo__/
 
 # Claude 
 CLAUDE.md
+.claude
 
 # Local data (raw scraped HTML, vector store)
 data/
+evals/
