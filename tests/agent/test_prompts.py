@@ -68,3 +68,9 @@ def test_system_prompt_states_the_line_budget_the_evaluation_enforces():
     assert f"at most {MAX_ANSWER_LINES} lines" in prompt
     assert f"{MAX_LINE_CHARS} characters" in prompt
     assert "counts as several" in prompt
+
+
+def test_system_prompt_forbids_unsourced_remarks_about_the_player():
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    assert "Do not add remarks about the player's level" in prompt
