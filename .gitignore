@@ -224,3 +224,6 @@ CLAUDE.md
 # Local data (raw scraped HTML, vector store)
 data/
 evals/
+
+# Local dev 
+prototypes/
