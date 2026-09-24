@@ -93,6 +93,8 @@ class ToolOutcome:
 
 
 class KnowledgeBaseTool:
+    definition = SEARCH_TOOL
+
     def __init__(self, retriever: Retrieves, n_results: int = RESULTS_PER_SEARCH):
         self._retriever = retriever
         self._n_results = n_results

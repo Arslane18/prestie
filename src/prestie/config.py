@@ -28,6 +28,16 @@ class Settings:
     # None lets the Anthropic SDK resolve credentials itself (env var, `ant` profile).
     anthropic_api_key: str | None = field(default=None, repr=False)
     claude_model: str = DEFAULT_CLAUDE_MODEL
+    # The addon's SavedVariables file (WTF/Account/<ACCOUNT>/SavedVariables/Prestie.lua).
+    saved_variables_path: Path | None = None
+
+    def require_saved_variables_path(self) -> Path:
+        if self.saved_variables_path is None:
+            raise ConfigError(
+                "PRESTIE_SAVEDVARIABLES is not set: point it to "
+                "WTF/Account/<ACCOUNT>/SavedVariables/Prestie.lua in .env"
+            )
+        return self.saved_variables_path
 
     def require_voyage_api_key(self) -> str:
         if not self.voyage_api_key:
@@ -46,7 +56,13 @@ def load_settings(env: Mapping[str, str | None] | None = None) -> Settings:
         chroma_dir=Path(env.get("PRESTIE_CHROMA_DIR") or DEFAULT_CHROMA_DIR),
         anthropic_api_key=_secret(env, "ANTHROPIC_API_KEY"),
         claude_model=env.get("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL,
+        saved_variables_path=_path(env, "PRESTIE_SAVEDVARIABLES"),
     )
+
+
+def _path(env: Mapping[str, str | None], name: str) -> Path | None:
+    value = (env.get(name) or "").strip()
+    return Path(value) if value else None
 
 
 def _secret(env: Mapping[str, str | None], name: str) -> str | None:

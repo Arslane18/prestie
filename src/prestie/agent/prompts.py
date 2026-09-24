@@ -15,6 +15,22 @@ HERO_TALENTS = ("San'layn", "Deathbringer")
 MAX_ANSWER_LINES = 8
 MAX_LINE_CHARS = 100
 
+# Addon mode: the character is read through a tool, not written in the prompt.
+# The prompt stays identical whatever the character does, so the cache holds.
+ADDON_PLAYER_SECTION = """\
+The player's character is not described here: call the get_character_state \
+tool to read it (level, class, specialization, hero talent, tracked quest). \
+Call it before answering any question whose answer depends on the character. \
+Do not ask the player for anything this tool provides. The state is a snapshot \
+from the player's last /reload or logout: if the player says something that \
+contradicts it (another level, quest or spec), trust the player and mention \
+that a /reload in game refreshes the state. If the tool reports that the \
+character is not covered by the knowledge base, say that your guides only \
+cover Blood Death Knight and give no advice specific to the character's class \
+or spec: the rule on patch-dependent content applies, and your sources do not \
+cover it. If the tool fails, \
+say that the character state is unavailable and answer without it."""
+
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Prestie, a World of Warcraft companion assistant. You help one player \
 with their character by answering questions about mechanics, rotation, talents, \
@@ -108,9 +124,10 @@ class PlayerContext:
         )
 
 
-def build_system_prompt(player: PlayerContext) -> str:
+def build_system_prompt(player: PlayerContext | None) -> str:
+    """Manual mode embeds `player`; addon mode (None) points to the state tool."""
     return SYSTEM_PROMPT_TEMPLATE.format(
-        player=player.describe(),
+        player=player.describe() if player else ADDON_PLAYER_SECTION,
         max_lines=MAX_ANSWER_LINES,
         line_chars=MAX_LINE_CHARS,
     )

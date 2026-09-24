@@ -5,15 +5,23 @@ import re
 import sys
 import time
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import anthropic
 import chromadb
 
-from prestie.agent.agent import Agent, AgentError, AgentReply, ToolCall
+from prestie.agent.agent import Agent, AgentError, AgentReply, Tool, ToolCall
+from prestie.agent.character_tool import (
+    CHARACTER_STATE_TOOL_NAME,
+    CharacterStateTool,
+    format_state,
+)
 from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
 from prestie.agent.tools import KnowledgeBaseTool
+from prestie.character.state import CharacterStateError
+from prestie.character.watcher import SavedVariablesWatcher
 from prestie.config import ConfigError, Settings, load_settings
 from prestie.evaluation import agent_checks, agent_judge, agent_runner
 from prestie.evaluation.agent_cases import AgentCase, load_agent_cases
@@ -111,18 +119,26 @@ def build_anthropic_client(settings: Settings, **options: Any) -> anthropic.Anth
 
 def build_agent(
     settings: Settings,
-    player: PlayerContext,
+    player: PlayerContext | None,
     on_tool_call: Callable[[ToolCall], None],
     *,
     retriever: Retriever | None = None,
     client: anthropic.Anthropic | None = None,
 ) -> Agent:
-    """The single place the agent is wired, shared by `chat` and `eval-agent`."""
+    """The single place the agent is wired, shared by `chat` and `eval-agent`.
+
+    With a `player`, the context is written in the system prompt (manual mode).
+    Without one, the agent reads it from the addon export (addon mode).
+    """
+    tools: list[Tool] = [KnowledgeBaseTool(retriever or open_retriever(settings))]
+    if player is None:
+        watcher = SavedVariablesWatcher(settings.require_saved_variables_path())
+        tools.append(CharacterStateTool(watcher))
     return Agent(
         client or build_anthropic_client(settings),
         model=settings.claude_model,
         system_prompt=build_system_prompt(player),
-        tool=KnowledgeBaseTool(retriever or open_retriever(settings)),
+        tools=tools,
         on_tool_call=on_tool_call,
     )
 
@@ -170,11 +186,21 @@ def _build_parser() -> argparse.ArgumentParser:
     evaluation.set_defaults(handler=_eval)
 
     chat = commands.add_parser("chat", help="Ask the Blood DK assistant (Claude + RAG)")
-    chat.add_argument("--level", type=int, required=True, help="Character level")
+    chat.add_argument(
+        "--level",
+        type=int,
+        help="Character level (manual mode); omit to read the character "
+        "from the addon export",
+    )
     chat.add_argument("--hero-talent", choices=HERO_TALENTS)
     chat.add_argument("-q", "--question", help="Ask one question and exit")
     chat.add_argument("--verbose", action="store_true", help="Show token usage")
     chat.set_defaults(handler=_chat)
+
+    watch = commands.add_parser(
+        "watch", help="Print the character state each time the addon export changes"
+    )
+    watch.set_defaults(handler=_watch)
 
     agent_eval = commands.add_parser(
         "eval-agent", help="Run the agent on reference questions and grade the answers"
@@ -299,8 +325,15 @@ def _truncate(text: str, width: int) -> str:
 
 
 def _chat(args: argparse.Namespace) -> int:
+    if args.level is None and args.hero_talent:
+        print("error: --hero-talent requires --level", file=sys.stderr)
+        return 1
     try:
-        player = PlayerContext(level=args.level, hero_talent=args.hero_talent)
+        player = (
+            PlayerContext(level=args.level, hero_talent=args.hero_talent)
+            if args.level is not None
+            else None
+        )
         agent = build_agent(load_settings(), player, on_tool_call=_print_tool_call)
     except (ValueError, *KNOWLEDGE_ERRORS) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -308,7 +341,8 @@ def _chat(args: argparse.Namespace) -> int:
 
     one_shot = args.question is not None
     if not one_shot:
-        print(f"Prestie — {player.describe()}. Tape 'exit' pour quitter.")
+        who = player.describe() if player else "personnage lu depuis l'addon"
+        print(f"Prestie — {who}. Tape 'exit' pour quitter.")
     for question in [args.question] if one_shot else _read_questions():
         try:
             reply = agent.ask(question)
@@ -319,6 +353,26 @@ def _chat(args: argparse.Namespace) -> int:
             continue
         print(_format_reply(reply, verbose=args.verbose))
     return 0
+
+
+def _watch(args: argparse.Namespace) -> int:
+    try:
+        watcher = SavedVariablesWatcher(load_settings().require_saved_variables_path())
+    except ConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Surveillance de {watcher.path} (Ctrl+C pour arrêter)")
+    try:
+        for state in watcher.watch(sleep=time.sleep, on_error=_print_state_error):
+            print(f"\n[{time.strftime('%H:%M:%S')}] nouvel état")
+            print(format_state(state, datetime.now(UTC)))
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+def _print_state_error(error: CharacterStateError) -> None:
+    print(f"error: {error}", file=sys.stderr)
 
 
 def _eval_agent(args: argparse.Namespace) -> int:
@@ -418,9 +472,15 @@ def _read_questions() -> Iterator[str]:
 
 
 def _print_tool_call(call: ToolCall) -> None:
+    print(format_tool_call(call))
+
+
+def format_tool_call(call: ToolCall) -> str:
+    if call.name == CHARACTER_STATE_TOOL_NAME:
+        return "  [personnage] lecture de l'état exporté par l'addon"
     content_type = call.input.get("content_type")
     scope = f" [{content_type}]" if content_type else ""
-    print(f"  [recherche] {call.input.get('query', '?')}{scope}")
+    return f"  [recherche] {call.input.get('query', '?')}{scope}"
 
 
 def _format_reply(reply: AgentReply, *, verbose: bool) -> str:

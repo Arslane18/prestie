@@ -2,9 +2,9 @@
 
 One question = one "turn", which may take several API requests:
 
-    user question ──► Claude ──stop_reason="tool_use"──► we run the search
+    user question ──► Claude ──stop_reason="tool_use"──► we run the tool(s)
          ▲                                                     │
-         └──────────── tool_result (passages) ◄────────────────┘
+         └──────────── tool_result (passages, state) ◄─────────┘
                  ... until stop_reason="end_turn" (final answer)
 
 The API is stateless: every request resends the whole conversation (system
@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 import anthropic
 
-from prestie.agent.tools import SEARCH_TOOL, SEARCH_TOOL_NAME, ToolOutcome
+from prestie.agent.tools import ToolOutcome
 
 DEFAULT_MAX_TOKENS = 16000
 # A focused Q&A rarely needs more than 2-3 searches; the cap bounds cost/latency.
@@ -83,7 +83,12 @@ class AgentError(Exception):
     """The Claude API call failed; the message is safe to show to the user."""
 
 
-class RunsTool(Protocol):
+class Tool(Protocol):
+    """A tool the agent can offer Claude: its definition and its executor."""
+
+    @property
+    def definition(self) -> Mapping[str, Any]: ...  # name, description, input_schema
+
     def run(self, tool_input: Mapping[str, Any]) -> ToolOutcome: ...
 
 
@@ -93,7 +98,7 @@ class Agent:
         client: Any,
         model: str,
         system_prompt: str,
-        tool: RunsTool,
+        tools: Sequence[Tool],
         *,
         on_tool_call: Callable[[ToolCall], None] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -102,7 +107,7 @@ class Agent:
         self._client = client
         self._model = model
         self._system_prompt = system_prompt
-        self._tool = tool
+        self._tools = _index_by_name(tools)
         self._on_tool_call = on_tool_call or (lambda call: None)
         self._max_tokens = max_tokens
         self._max_tool_rounds = max_tool_rounds
@@ -169,7 +174,9 @@ class Agent:
                 model=self._model,
                 max_tokens=self._max_tokens,
                 system=self._system_prompt,
-                tools=[SEARCH_TOOL],
+                # Same tools in the same order every time: they are part of the
+                # cached prefix.
+                tools=[dict(tool.definition) for tool in self._tools.values()],
                 messages=list(messages),
                 # Automatic caching: caches the longest reusable prefix, so each
                 # request of the loop re-reads system + tools + history from cache.
@@ -197,16 +204,25 @@ class Agent:
 
     def _run_tool(self, block: Any, call: ToolCall) -> dict[str, Any]:
         self._on_tool_call(call)
-        if call.name != SEARCH_TOOL_NAME:
+        tool = self._tools.get(call.name)
+        if tool is None:
             outcome = ToolOutcome(f"Unknown tool: {call.name}", is_error=True)
         else:
-            outcome = self._tool.run(call.input)
+            outcome = tool.run(call.input)
         result = {
             "type": "tool_result",
             "tool_use_id": block.id,
             "content": outcome.content,
         }
         return {**result, "is_error": True} if outcome.is_error else result
+
+
+def _index_by_name(tools: Sequence[Tool]) -> dict[str, Tool]:
+    names = [tool.definition["name"] for tool in tools]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"Duplicate tool names: {', '.join(duplicates)}")
+    return dict(zip(names, tools))
 
 
 def _text(content: Sequence[Any]) -> str:
