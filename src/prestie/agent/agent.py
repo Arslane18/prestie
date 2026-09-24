@@ -73,6 +73,10 @@ class AgentReply:
     usage: Usage = Usage()
     refused: bool = False
     truncated: bool = False
+    # This turn's messages (question, assistant blocks, tool results), for traces.
+    messages: tuple[dict[str, Any], ...] = ()
+    # Model that actually served each request (may differ after a fallback).
+    models: tuple[str, ...] = ()
 
 
 class AgentError(Exception):
@@ -106,9 +110,11 @@ class Agent:
 
     def ask(self, question: str) -> AgentReply:
         """Run one turn. History is only updated when the turn completes cleanly."""
+        turn_start = len(self._history)
         messages = (*self._history, {"role": "user", "content": question})
         tool_calls: tuple[ToolCall, ...] = ()
         usage = Usage()
+        models: tuple[str, ...] = ()
         tool_rounds = 0
 
         while True:
@@ -116,8 +122,16 @@ class Agent:
                 messages, allow_tools=tool_rounds < self._max_tool_rounds
             )
             usage = usage + Usage.from_api(response.usage)
+            models = (*models, str(getattr(response, "model", self._model)))
             if response.stop_reason == "refusal":
-                return AgentReply(REFUSAL_MESSAGE, tool_calls, usage, refused=True)
+                return AgentReply(
+                    REFUSAL_MESSAGE,
+                    tool_calls,
+                    usage,
+                    refused=True,
+                    messages=messages[turn_start:],
+                    models=models,
+                )
 
             messages = (*messages, {"role": "assistant", "content": response.content})
             if response.stop_reason != "tool_use":
@@ -140,7 +154,12 @@ class Agent:
         if not (truncated and _has_tool_use(response.content)):
             self._history = messages
         return AgentReply(
-            _text(response.content), tool_calls, usage, truncated=truncated
+            _text(response.content),
+            tool_calls,
+            usage,
+            truncated=truncated,
+            messages=messages[turn_start:],
+            models=models,
         )
 
     def _request(self, messages: Sequence[dict[str, Any]], *, allow_tools: bool) -> Any:

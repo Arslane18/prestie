@@ -1,10 +1,12 @@
 """Command-line entry point: `prestie <command>`."""
 
 import argparse
+import re
 import sys
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import anthropic
 import chromadb
@@ -13,6 +15,19 @@ from prestie.agent.agent import Agent, AgentError, AgentReply, ToolCall
 from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
 from prestie.agent.tools import KnowledgeBaseTool
 from prestie.config import ConfigError, Settings, load_settings
+from prestie.evaluation import agent_checks, agent_judge, agent_runner
+from prestie.evaluation.agent_cases import AgentCase, load_agent_cases
+from prestie.evaluation.agent_judge import DEFAULT_JUDGE_MODEL, Judge
+from prestie.evaluation.agent_runner import (
+    RESULTS_FILE,
+    HarnessChangedError,
+    RunSummary,
+    check_harness,
+    ensure_state,
+    read_jsonl,
+    row_cost_usd,
+    run_agent_eval,
+)
 from prestie.evaluation.retrieval import (
     CaseResult,
     EvalCaseError,
@@ -45,6 +60,18 @@ SNIPPET_CHARS = 300
 EVAL_QUESTION_CHARS = 60
 EVAL_SECTION_CHARS = 55
 EXIT_COMMANDS = frozenset({"exit", "quit", "q"})
+DEFAULT_AGENT_CASES = Path("evals/agent_cases.json")
+DEFAULT_AGENT_FLOW_DIR = Path(".claude/hillclimb/agent-qa")
+BASELINE_VARIANT = "baseline"
+VARIANT_PATTERN = re.compile(r"v\d+")
+DEFAULT_REPS = 2
+DEFAULT_EVAL_WORKERS = 4
+EVAL_REQUEST_TIMEOUT_S = 180.0
+EVAL_MAX_RETRIES = 4
+# Grading code covered by the harness-approval gate.
+HARNESS_PATHS = tuple(
+    Path(module.__file__) for module in (agent_checks, agent_judge, agent_runner)
+)
 KNOWLEDGE_ERRORS = (
     ConfigError,
     EmbeddingError,
@@ -73,22 +100,29 @@ def open_retriever(settings: Settings) -> Retriever:
     return Retriever(build_embedder(settings), open_store(settings))
 
 
-def build_agent(
-    settings: Settings,
-    player: PlayerContext,
-    on_tool_call: Callable[[ToolCall], None],
-) -> Agent:
+def build_anthropic_client(settings: Settings, **options: Any) -> anthropic.Anthropic:
     try:
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        return anthropic.Anthropic(api_key=settings.anthropic_api_key, **options)
     except anthropic.AnthropicError as exc:
         raise ConfigError(
             "No Anthropic credentials: set ANTHROPIC_API_KEY in .env"
         ) from exc
+
+
+def build_agent(
+    settings: Settings,
+    player: PlayerContext,
+    on_tool_call: Callable[[ToolCall], None],
+    *,
+    retriever: Retriever | None = None,
+    client: anthropic.Anthropic | None = None,
+) -> Agent:
+    """The single place the agent is wired, shared by `chat` and `eval-agent`."""
     return Agent(
-        client,
+        client or build_anthropic_client(settings),
         model=settings.claude_model,
         system_prompt=build_system_prompt(player),
-        tool=KnowledgeBaseTool(open_retriever(settings)),
+        tool=KnowledgeBaseTool(retriever or open_retriever(settings)),
         on_tool_call=on_tool_call,
     )
 
@@ -141,7 +175,32 @@ def _build_parser() -> argparse.ArgumentParser:
     chat.add_argument("-q", "--question", help="Ask one question and exit")
     chat.add_argument("--verbose", action="store_true", help="Show token usage")
     chat.set_defaults(handler=_chat)
+
+    agent_eval = commands.add_parser(
+        "eval-agent", help="Run the agent on reference questions and grade the answers"
+    )
+    agent_eval.add_argument("--cases", type=Path, default=DEFAULT_AGENT_CASES)
+    agent_eval.add_argument("--flow-dir", type=Path, default=DEFAULT_AGENT_FLOW_DIR)
+    agent_eval.add_argument("--variant", default=BASELINE_VARIANT, type=_variant_name)
+    agent_eval.add_argument("--reps", type=int, default=DEFAULT_REPS)
+    agent_eval.add_argument("--only", help="Comma-separated case ids (pilot runs)")
+    agent_eval.add_argument("--workers", type=int, default=DEFAULT_EVAL_WORKERS)
+    agent_eval.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
+    agent_eval.add_argument(
+        "--approve-harness",
+        action="store_true",
+        help="Record the current grading code as approved (after reviewing it)",
+    )
+    agent_eval.set_defaults(handler=_eval_agent)
     return parser
+
+
+def _variant_name(value: str) -> str:
+    if value != BASELINE_VARIANT and not VARIANT_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "variant must be 'baseline' or v<N> (v1, v2...)"
+        )
+    return value
 
 
 def _scrape(args: argparse.Namespace) -> int:
@@ -260,6 +319,89 @@ def _chat(args: argparse.Namespace) -> int:
             continue
         print(_format_reply(reply, verbose=args.verbose))
     return 0
+
+
+def _eval_agent(args: argparse.Namespace) -> int:
+    try:
+        cases = _select_cases(load_agent_cases(args.cases), args.only)
+        state_path = ensure_state(args.flow_dir)
+        check_harness(state_path, HARNESS_PATHS, approve=args.approve_harness)
+        settings = load_settings()
+        client = build_eval_client(settings)
+        retriever = open_retriever(settings)
+        summary = run_agent_eval(
+            cases,
+            agent_factory=lambda case: build_agent(
+                settings,
+                case.player(),
+                _ignore_tool_call,
+                retriever=retriever,
+                client=client,
+            ),
+            judge=Judge(client, model=args.judge_model),
+            variant_dir=args.flow_dir / args.variant,
+            reps=args.reps,
+            workers=args.workers,
+            expected_model=settings.claude_model,
+        )
+    except (HarnessChangedError, *KNOWLEDGE_ERRORS) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    rows = read_jsonl(args.flow_dir / args.variant / RESULTS_FILE)
+    print(_format_eval_summary(summary, rows, args.flow_dir))
+    return 0
+
+
+def build_eval_client(settings: Settings) -> anthropic.Anthropic:
+    return build_anthropic_client(
+        settings, timeout=EVAL_REQUEST_TIMEOUT_S, max_retries=EVAL_MAX_RETRIES
+    )
+
+
+def _select_cases(
+    cases: tuple[AgentCase, ...], only: str | None
+) -> tuple[AgentCase, ...]:
+    if not only:
+        return cases
+    wanted = [case_id.strip() for case_id in only.split(",") if case_id.strip()]
+    known = {case.id for case in cases}
+    unknown = [case_id for case_id in wanted if case_id not in known]
+    if unknown:
+        raise EvalCaseError(f"Unknown case ids: {', '.join(unknown)}")
+    return tuple(case for case in cases if case.id in wanted)
+
+
+def _ignore_tool_call(call: ToolCall) -> None:
+    return None
+
+
+def _format_eval_summary(
+    summary: RunSummary, rows: list[dict[str, Any]], flow_dir: Path
+) -> str:
+    if summary.pass_rate is None:
+        headline = "no graded answers"
+    else:
+        ci = (
+            f" ± {summary.ci_half_width:.2f}"
+            if summary.ci_half_width is not None
+            else ""
+        )
+        headline = f"pass = {summary.pass_rate:.2f}{ci} over {summary.cases} cases"
+    metrics = "  ".join(
+        f"{name}={value:.2f}"
+        for name, value in summary.metric_means.items()
+        if name != "pass"
+    )
+    cost = sum(row_cost_usd(row) for row in rows)
+    return "\n".join(
+        [
+            f"{summary.attempts_run} attempts run, {summary.errors} errors (see errors.jsonl)",
+            headline,
+            metrics,
+            f"measured cost of all rows: ${cost:.2f}",
+            f"report: node <claude-api skill>/shared/evals/report/build-report-lite.mjs {flow_dir}",
+        ]
+    )
 
 
 def _read_questions() -> Iterator[str]:
