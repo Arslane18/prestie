@@ -59,3 +59,16 @@ def test_claude_settings_are_read_from_environment():
     assert settings.anthropic_api_key == "sk-ant-x"
     assert settings.claude_model == "claude-sonnet-5"
     assert "sk-ant-x" not in repr(settings)
+
+
+def test_saved_variables_path_is_read_from_environment():
+    settings = load_settings({"PRESTIE_SAVEDVARIABLES": "/wow/Prestie.lua"})
+
+    assert settings.require_saved_variables_path() == Path("/wow/Prestie.lua")
+
+
+def test_missing_saved_variables_path_fails_only_when_needed():
+    settings = load_settings({})
+
+    with pytest.raises(ConfigError, match="PRESTIE_SAVEDVARIABLES"):
+        settings.require_saved_variables_path()

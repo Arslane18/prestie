@@ -300,3 +300,66 @@ def test_eval_agent_rejects_unknown_case_ids(agent_eval_env, capsys):
 
     assert exit_code == 1
     assert "nope" in capsys.readouterr().err
+
+
+def test_chat_without_level_runs_in_addon_mode(fake_agent, capsys):
+    exit_code = cli.main(["chat", "-q", "Quelle quête ?"])
+
+    assert exit_code == 0
+    assert fake_agent["player"] is None
+    assert fake_agent["agent"].questions == ["Quelle quête ?"]
+
+
+def test_chat_rejects_hero_talent_without_level(fake_agent, capsys):
+    exit_code = cli.main(["chat", "--hero-talent", "San'layn", "-q", "q"])
+
+    assert exit_code == 1
+    assert "--level" in capsys.readouterr().err
+
+
+def test_character_state_tool_calls_are_announced():
+    from prestie.agent.agent import ToolCall
+
+    assert "personnage" in cli.format_tool_call(ToolCall("get_character_state", {}))
+
+
+SAVED_VARIABLES = """\
+PrestieDB = {
+["schema"] = 1,
+["snapshot"] = {
+["capturedAt"] = 1790278000,
+["character"] = "Testeur",
+["realm"] = "Hyjal",
+["level"] = 83,
+["class"] = {
+["name"] = "Chevalier de la mort",
+["file"] = "DEATHKNIGHT",
+},
+},
+}
+"""
+
+
+def test_watch_prints_the_character_state(tmp_path, monkeypatch, capsys):
+    saved = tmp_path / "Prestie.lua"
+    saved.write_text(SAVED_VARIABLES, encoding="utf-8")
+    monkeypatch.setenv("PRESTIE_SAVEDVARIABLES", str(saved))
+
+    def stop(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", stop)
+
+    exit_code = cli.main(["watch"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Level: 83" in out
+    assert "Testeur (Hyjal)" in out
+
+
+def test_watch_without_configured_path_fails_cleanly(monkeypatch, capsys):
+    monkeypatch.setenv("PRESTIE_SAVEDVARIABLES", "")
+
+    assert cli.main(["watch"]) == 1
+    assert "PRESTIE_SAVEDVARIABLES" in capsys.readouterr().err

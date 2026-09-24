@@ -74,3 +74,17 @@ def test_system_prompt_forbids_unsourced_remarks_about_the_player():
     prompt = build_system_prompt(PlayerContext(level=80))
 
     assert "Do not add remarks about the player's level" in prompt
+
+
+def test_addon_mode_prompt_points_to_the_character_state_tool():
+    prompt = build_system_prompt(None)
+
+    assert "get_character_state" in prompt
+    assert "Do not ask the player" in prompt
+    assert "/reload" in prompt
+    assert "only cover Blood Death Knight" in prompt
+
+
+def test_manual_mode_prompt_does_not_mention_the_character_state_tool():
+    # The agent evaluation runs in manual mode: its prompt must not change.
+    assert "get_character_state" not in build_system_prompt(PlayerContext(level=80))

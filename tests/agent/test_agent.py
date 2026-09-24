@@ -5,7 +5,7 @@ import httpx2
 import pytest
 
 from prestie.agent.agent import Agent, AgentError
-from prestie.agent.tools import ToolOutcome
+from prestie.agent.tools import SEARCH_TOOL, ToolOutcome
 
 MODEL = "claude-opus-5"
 SYSTEM = "system prompt"
@@ -56,7 +56,8 @@ class FakeClient:
 
 
 class FakeTool:
-    def __init__(self, outcome: ToolOutcome | None = None):
+    def __init__(self, outcome: ToolOutcome | None = None, definition=None):
+        self.definition = definition or SEARCH_TOOL
         self.inputs: list[dict] = []
         self.outcome = outcome or ToolOutcome("<search_results>...</search_results>")
 
@@ -66,9 +67,8 @@ class FakeTool:
 
 
 def make_agent(client, tool=None, **kwargs) -> Agent:
-    return Agent(
-        client, model=MODEL, system_prompt=SYSTEM, tool=tool or FakeTool(), **kwargs
-    )
+    tools = kwargs.pop("tools", None) or [tool or FakeTool()]
+    return Agent(client, model=MODEL, system_prompt=SYSTEM, tools=tools, **kwargs)
 
 
 def test_direct_answer_needs_a_single_request():
@@ -142,6 +142,32 @@ def test_unknown_tool_name_is_answered_with_an_error_result():
     [result] = client.requests[1]["messages"][-1]["content"]
     assert result["is_error"] is True
     assert "Unknown tool" in result["content"]
+
+
+def test_each_tool_call_is_routed_to_the_tool_with_that_name():
+    search = FakeTool(ToolOutcome("PASSAGES"))
+    state = FakeTool(
+        ToolOutcome("STATE"),
+        definition={"name": "get_character_state", "input_schema": {}},
+    )
+    client = FakeClient(
+        tool_response(("get_character_state", {}), ("search_knowledge_base", {})),
+        text_response("ok"),
+    )
+
+    make_agent(client, tools=[search, state]).ask("q")
+
+    assert [t["name"] for t in client.requests[0]["tools"]] == [
+        "search_knowledge_base",
+        "get_character_state",
+    ]
+    results = client.requests[1]["messages"][-1]["content"]
+    assert [r["content"] for r in results] == ["STATE", "PASSAGES"]
+
+
+def test_duplicate_tool_names_are_rejected():
+    with pytest.raises(ValueError, match="search_knowledge_base"):
+        make_agent(FakeClient(), tools=[FakeTool(), FakeTool()])
 
 
 def test_conversation_history_is_kept_between_questions():
