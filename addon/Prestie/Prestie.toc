@@ -1,0 +1,8 @@
+## Interface: 120100
+## Title: Prestie
+## Notes: Exports your character (level, class, spec, quests) for the Prestie companion app.
+## Author: arslane18
+## Version: 0.1.0
+## SavedVariables: PrestieDB
+
+Prestie.lua
