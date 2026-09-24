@@ -53,3 +53,9 @@ def test_system_prompt_asks_to_match_answer_depth_to_the_question():
 
     assert "beginner" in prompt
     assert "short" in prompt
+
+
+def test_system_prompt_caps_simple_answers_at_eight_lines():
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    assert "at most 8 lines" in prompt

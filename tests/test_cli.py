@@ -224,3 +224,79 @@ def test_chat_rejects_invalid_level(fake_agent, capsys):
 
     assert exit_code == 1
     assert "level" in capsys.readouterr().err
+
+
+@pytest.fixture
+def agent_eval_env(tmp_path, monkeypatch):
+    """Fake agent + judge so eval-agent runs without any API call."""
+    from prestie.agent.agent import AgentReply
+    from prestie.evaluation.agent_judge import JudgeVerdict
+
+    class EvalAgent:
+        def ask(self, question):
+            return AgentReply(text="Merci à toi !", models=("claude-opus-5",))
+
+    class EvalJudge:
+        def __init__(self, client, model):
+            self.model = model
+
+        def grade(self, case, answer, tool_outputs):
+            return JudgeVerdict(
+                {"helpful": 1.0}, {"helpful": "ok"}, self.model, Usage()
+            )
+
+    from prestie.agent.agent import Usage
+
+    monkeypatch.setattr(cli, "build_agent", lambda *args, **kwargs: EvalAgent())
+    monkeypatch.setattr(cli, "Judge", EvalJudge)
+    monkeypatch.setattr(cli, "build_eval_client", lambda settings: object())
+    monkeypatch.setattr(cli, "open_retriever", lambda settings: object())
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-opus-5")
+    return tmp_path / "flow"
+
+
+def test_eval_agent_refuses_to_run_an_unapproved_harness(agent_eval_env, capsys):
+    exit_code = cli.main(
+        ["eval-agent", "--flow-dir", str(agent_eval_env), "--only", "thanks"]
+    )
+
+    assert exit_code == 1
+    assert "--approve-harness" in capsys.readouterr().err
+
+
+def test_eval_agent_pilot_on_selected_cases(agent_eval_env, capsys):
+    exit_code = cli.main(
+        [
+            "eval-agent",
+            "--flow-dir",
+            str(agent_eval_env),
+            "--only",
+            "thanks,insult",
+            "--reps",
+            "1",
+            "--approve-harness",
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "2 attempts run, 0 errors" in out
+    assert "pass = 1.00" in out
+    assert (agent_eval_env / "baseline" / "results.jsonl").exists()
+    assert (agent_eval_env / "_state.json").exists()
+
+
+def test_eval_agent_rejects_unknown_case_ids(agent_eval_env, capsys):
+    exit_code = cli.main(
+        [
+            "eval-agent",
+            "--flow-dir",
+            str(agent_eval_env),
+            "--only",
+            "nope",
+            "--approve-harness",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "nope" in capsys.readouterr().err

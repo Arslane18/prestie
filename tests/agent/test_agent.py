@@ -25,6 +25,7 @@ def text_response(text: str, stop_reason: str = "end_turn", **usage_kwargs):
         content=[SimpleNamespace(type="text", text=text)],
         stop_reason=stop_reason,
         usage=usage(**usage_kwargs),
+        model=MODEL,
     )
 
 
@@ -33,7 +34,9 @@ def tool_response(*calls: tuple[str, dict]):
         SimpleNamespace(type="tool_use", id=f"toolu_{i}", name=name, input=tool_input)
         for i, (name, tool_input) in enumerate(calls)
     ]
-    return SimpleNamespace(content=blocks, stop_reason="tool_use", usage=usage())
+    return SimpleNamespace(
+        content=blocks, stop_reason="tool_use", usage=usage(), model=MODEL
+    )
 
 
 class FakeClient:
@@ -222,3 +225,21 @@ def test_total_input_tokens_include_cached_tokens():
     )
 
     assert usage.total_input_tokens == 4 + 1228 + 5781
+
+
+def test_reply_exposes_the_turn_messages_and_served_models():
+    client = FakeClient(
+        tool_response(("search_knowledge_base", {"query": "x"})),
+        text_response("final"),
+    )
+
+    reply = make_agent(client, FakeTool(ToolOutcome("PASSAGES"))).ask("q")
+
+    assert reply.models == (MODEL, MODEL)
+    assert [m["role"] for m in reply.messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert reply.messages[2]["content"][0]["content"] == "PASSAGES"
