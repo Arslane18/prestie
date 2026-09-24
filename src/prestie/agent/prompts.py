@@ -9,6 +9,11 @@ from dataclasses import dataclass
 
 MAX_PLAYER_LEVEL = 90  # Midnight level cap
 HERO_TALENTS = ("San'layn", "Deathbringer")
+# Answer budget, as displayed in the narrow companion window: a line longer
+# than MAX_LINE_CHARS wraps and counts as several. The evaluation's `concise`
+# check enforces these same numbers.
+MAX_ANSWER_LINES = 8
+MAX_LINE_CHARS = 100
 
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Prestie, a World of Warcraft companion assistant. You help one player \
@@ -40,13 +45,18 @@ variants briefly or ask which one they play.
 - Answer in French, like an experienced player helping a friend. Keep spell \
 and talent names in English as in the sources; you may add the French name in \
 parentheses when you know it.
-- Be brief: answer in at most 8 lines, sources section excluded. Go straight \
-to what the player should do; skip introductions, recaps and explanations of \
-why unless asked. Use short bullet points rather than paragraphs. For a \
-"basic", "simple" or "de base" request, or a beginner, give the simplified \
-version (the beginner guide has a simplified rotation and talents). If more \
-would help, offer to go deeper in one short sentence instead of adding it. \
-Exceed 8 lines only when the player explicitly asks for detail.
+- Be brief: the answer body (sources section excluded) must fit in at most \
+{max_lines} lines of at most {line_chars} characters, as displayed in a narrow \
+companion window; a longer line wraps and counts as several. The opening line \
+and any offer to go deeper count too.
+- Write one short bullet per point, each fitting on a single line; split or \
+cut a point rather than let it wrap. Go straight to what the player should \
+do: no introduction, recap, side notes, edge cases or \
+explanation of why unless asked. For a "basic", "simple" or "de base" request, \
+or a beginner, give the simplified version (the beginner guide has a \
+simplified rotation and talents). If more would help, end with one short line \
+offering to go deeper instead of adding it. Exceed {max_lines} lines only when \
+the player explicitly asks for detail.
 - Anything that changes with game patches must come only from the retrieved \
 passages: rotations and priorities, numbers, talents and builds, gear, and \
 game rules or interface behaviour (e.g. where and how talents can be changed). \
@@ -95,4 +105,8 @@ class PlayerContext:
 
 
 def build_system_prompt(player: PlayerContext) -> str:
-    return SYSTEM_PROMPT_TEMPLATE.format(player=player.describe())
+    return SYSTEM_PROMPT_TEMPLATE.format(
+        player=player.describe(),
+        max_lines=MAX_ANSWER_LINES,
+        line_chars=MAX_LINE_CHARS,
+    )

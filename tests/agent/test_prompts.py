@@ -1,6 +1,12 @@
 import pytest
 
-from prestie.agent.prompts import MAX_PLAYER_LEVEL, PlayerContext, build_system_prompt
+from prestie.agent.prompts import (
+    MAX_ANSWER_LINES,
+    MAX_LINE_CHARS,
+    MAX_PLAYER_LEVEL,
+    PlayerContext,
+    build_system_prompt,
+)
 
 
 def test_player_context_describes_level_class_spec_and_hero_talent():
@@ -55,7 +61,10 @@ def test_system_prompt_asks_to_match_answer_depth_to_the_question():
     assert "short" in prompt
 
 
-def test_system_prompt_caps_simple_answers_at_eight_lines():
+def test_system_prompt_states_the_line_budget_the_evaluation_enforces():
     prompt = build_system_prompt(PlayerContext(level=80))
 
-    assert "at most 8 lines" in prompt
+    # Same numbers as the `concise` check: 8 displayed lines of 100 characters.
+    assert f"at most {MAX_ANSWER_LINES} lines" in prompt
+    assert f"{MAX_LINE_CHARS} characters" in prompt
+    assert "counts as several" in prompt

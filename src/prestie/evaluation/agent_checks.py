@@ -9,6 +9,7 @@ import re
 from collections.abc import Iterable
 from html import unescape
 
+from prestie.agent.prompts import MAX_ANSWER_LINES, MAX_LINE_CHARS
 from prestie.evaluation.agent_cases import AgentCase
 
 SOURCES_HEADING = "sources (contenu copié d'icy veins)"
@@ -16,11 +17,11 @@ CITED_URL = re.compile(r"https?://www\.icy-veins\.com/wow/[^\s)\]>\"'`<]+")
 RETRIEVED_URL = re.compile(r'source_url="([^"]*)"')
 TRAILING_PUNCTUATION = ".,;:!?"
 WOW_PATH_MARKER = "/wow/"
-# A simple question must be answered in at most this many lines (sources
-# excluded). Lines longer than LINE_WIDTH count as several, so one endless
-# paragraph cannot dodge the cap.
-MAX_SIMPLE_ANSWER_LINES = 8
-LINE_WIDTH = 100
+# A simple question must be answered within the line budget the system prompt
+# states (sources excluded). Lines longer than LINE_WIDTH count as several, so
+# one endless paragraph cannot dodge the cap.
+MAX_SIMPLE_ANSWER_LINES = MAX_ANSWER_LINES
+LINE_WIDTH = MAX_LINE_CHARS
 
 # Checks that decide whether a case passes ("retrieved" is diagnostic only).
 GATING_CHECKS = (
