@@ -12,7 +12,17 @@ from typing import Any
 import anthropic
 import chromadb
 
-from prestie.agent.agent import Agent, AgentError, AgentReply, Tool, ToolCall
+from prestie.agent.agent import (
+    Agent,
+    AgentError,
+    AgentReply,
+    FallbackRestart,
+    TextDelta,
+    Tool,
+    ToolCall,
+    ToolCallStarted,
+    TurnFinished,
+)
 from prestie.agent.character_tool import (
     CHARACTER_STATE_TOOL_NAME,
     CharacterStateTool,
@@ -356,7 +366,8 @@ def _chat(args: argparse.Namespace) -> int:
             if args.level is not None
             else None
         )
-        agent = build_agent(load_settings(), player, on_tool_call=_print_tool_call)
+        # Tool calls are shown from the event stream (see _stream_reply).
+        agent = build_agent(load_settings(), player, on_tool_call=_ignore_tool_call)
     except (ValueError, *KNOWLEDGE_ERRORS) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -367,14 +378,26 @@ def _chat(args: argparse.Namespace) -> int:
         print(f"Prestie — {who}. Tape 'exit' pour quitter.")
     for question in [args.question] if one_shot else _read_questions():
         try:
-            reply = agent.ask(question)
+            _stream_reply(agent, question, verbose=args.verbose)
         except AgentError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+            print(f"\nerror: {exc}", file=sys.stderr)
             if one_shot:
                 return 1
-            continue
-        print(_format_reply(reply, verbose=args.verbose))
     return 0
+
+
+def _stream_reply(agent: Agent, question: str, *, verbose: bool) -> None:
+    """Print the answer as it is generated, with tool calls on their own lines."""
+    print("\nprestie> ", end="", flush=True)
+    for event in agent.ask_stream(question):
+        if isinstance(event, TextDelta):
+            print(event.text, end="", flush=True)
+        elif isinstance(event, ToolCallStarted):
+            print(f"\n{format_tool_call(event.call)}", flush=True)
+        elif isinstance(event, FallbackRestart):
+            print("\n[autre modèle, la réponse reprend]", flush=True)
+        elif isinstance(event, TurnFinished):
+            print(_format_footer(event.reply, verbose=verbose))
 
 
 def _watch(args: argparse.Namespace) -> int:
@@ -498,10 +521,6 @@ def _read_questions() -> Iterator[str]:
             yield line
 
 
-def _print_tool_call(call: ToolCall) -> None:
-    print(format_tool_call(call))
-
-
 def format_tool_call(call: ToolCall) -> str:
     if call.name == CHARACTER_STATE_TOOL_NAME:
         return "  [personnage] lecture de l'état exporté par l'addon"
@@ -512,8 +531,10 @@ def format_tool_call(call: ToolCall) -> str:
     return f"  [recherche] {call.input.get('query', '?')}{scope}"
 
 
-def _format_reply(reply: AgentReply, *, verbose: bool) -> str:
-    lines = [f"\nprestie> {reply.text}"]
+def _format_footer(reply: AgentReply, *, verbose: bool) -> str:
+    lines = [""]
+    if reply.refused:
+        lines.append(reply.text)
     if reply.truncated:
         lines.append("[réponse tronquée : limite de tokens atteinte]")
     if verbose:
@@ -523,7 +544,7 @@ def _format_reply(reply: AgentReply, *, verbose: bool) -> str:
             f"(lus depuis le cache: {usage.cache_read_input_tokens}, "
             f"écrits en cache: {usage.cache_creation_input_tokens}, "
             f"hors cache: {usage.input_tokens}) "
-            f"· sortie: {usage.output_tokens} · recherches: {len(reply.tool_calls)}"
+            f"· sortie: {usage.output_tokens} · appels d'outils: {len(reply.tool_calls)}"
         )
     return "\n".join(lines)
 

@@ -161,18 +161,29 @@ class FakeAgent:
         self.on_tool_call = on_tool_call
         self.questions: list[str] = []
 
-    def ask(self, question):
-        from prestie.agent.agent import AgentReply, ToolCall, Usage
+    def ask_stream(self, question):
+        from prestie.agent.agent import (
+            AgentReply,
+            TextDelta,
+            ToolCall,
+            ToolCallStarted,
+            TurnFinished,
+            Usage,
+        )
 
         self.questions.append(question)
         call = ToolCall(name="search_knowledge_base", input={"query": "stat priority"})
-        self.on_tool_call(call)
-        return AgentReply(
-            text="Priorité : Hâte.",
-            tool_calls=(call,),
-            usage=Usage(
-                input_tokens=1200, output_tokens=80, cache_read_input_tokens=900
-            ),
+        yield ToolCallStarted(call)
+        yield TextDelta("Priorité : ")
+        yield TextDelta("Hâte.")
+        yield TurnFinished(
+            AgentReply(
+                text="Priorité : Hâte.",
+                tool_calls=(call,),
+                usage=Usage(
+                    input_tokens=1200, output_tokens=80, cache_read_input_tokens=900
+                ),
+            )
         )
 
 

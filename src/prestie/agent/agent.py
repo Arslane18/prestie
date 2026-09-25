@@ -10,9 +10,13 @@ One question = one "turn", which may take several API requests:
 The API is stateless: every request resends the whole conversation (system
 prompt + tool definitions + history). Prompt caching makes that cheap: the
 unchanged prefix is read from cache at ~10% of the input price.
+
+Every request is streamed: `ask_stream` yields the answer's text as Claude
+writes it and announces each tool call, so a UI can show progress instead of a
+spinner. `ask` runs the same loop and only keeps the final reply.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -83,6 +87,33 @@ class AgentError(Exception):
     """The Claude API call failed; the message is safe to show to the user."""
 
 
+@dataclass(frozen=True)
+class TextDelta:
+    """A piece of the answer, as generated."""
+
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolCallStarted:
+    call: ToolCall
+
+
+@dataclass(frozen=True)
+class FallbackRestart:
+    """The model was declined mid-answer and a fallback model takes over: text
+    streamed since the start of this request is superseded and should be
+    cleared from the display."""
+
+
+@dataclass(frozen=True)
+class TurnFinished:
+    reply: AgentReply
+
+
+AgentEvent = TextDelta | ToolCallStarted | FallbackRestart | TurnFinished
+
+
 class Tool(Protocol):
     """A tool the agent can offer Claude: its definition and its executor."""
 
@@ -118,7 +149,18 @@ class Agent:
         return tuple(self._tools)
 
     def ask(self, question: str) -> AgentReply:
-        """Run one turn. History is only updated when the turn completes cleanly."""
+        """Run one turn and return the final reply (the streamed events are dropped)."""
+        for event in self.ask_stream(question):
+            if isinstance(event, TurnFinished):
+                return event.reply
+        raise AssertionError("ask_stream ended without TurnFinished")  # unreachable
+
+    def ask_stream(self, question: str) -> Iterator[AgentEvent]:
+        """Run one turn, yielding text as it is generated and each tool call.
+
+        History is only updated when the turn completes cleanly. The last event
+        is always TurnFinished; API failures raise AgentError mid-iteration.
+        """
         turn_start = len(self._history)
         messages = (*self._history, {"role": "user", "content": question})
         tool_calls: tuple[ToolCall, ...] = ()
@@ -127,54 +169,62 @@ class Agent:
         tool_rounds = 0
 
         while True:
-            response = self._request(
+            response = yield from self._stream_request(
                 messages, allow_tools=tool_rounds < self._max_tool_rounds
             )
             usage = usage + Usage.from_api(response.usage)
             models = (*models, str(getattr(response, "model", self._model)))
             if response.stop_reason == "refusal":
-                return AgentReply(
-                    REFUSAL_MESSAGE,
-                    tool_calls,
-                    usage,
-                    refused=True,
-                    messages=messages[turn_start:],
-                    models=models,
+                yield TurnFinished(
+                    AgentReply(
+                        REFUSAL_MESSAGE,
+                        tool_calls,
+                        usage,
+                        refused=True,
+                        messages=messages[turn_start:],
+                        models=models,
+                    )
                 )
+                return
 
-            messages = (*messages, {"role": "assistant", "content": response.content})
+            content = _echo_content(response.content)
+            messages = (*messages, {"role": "assistant", "content": content})
             if response.stop_reason != "tool_use":
                 break
 
             tool_rounds += 1
-            tool_uses = [
-                block for block in response.content if block.type == "tool_use"
-            ]
+            tool_uses = [block for block in content if block.type == "tool_use"]
             calls = tuple(ToolCall(block.name, block.input) for block in tool_uses)
             tool_calls = (*tool_calls, *calls)
+            results = []
+            for block, call in zip(tool_uses, calls):
+                yield ToolCallStarted(call)
+                results.append(self._run_tool(block, call))
             # All results of one round go back in a single user message.
-            results = [
-                self._run_tool(block, call) for block, call in zip(tool_uses, calls)
-            ]
             messages = (*messages, {"role": "user", "content": results})
 
         truncated = response.stop_reason == "max_tokens"
         # A truncated tool_use without its tool_result would make the next request invalid.
-        if not (truncated and _has_tool_use(response.content)):
+        if not (truncated and _has_tool_use(content)):
             self._history = messages
-        return AgentReply(
-            _text(response.content),
-            tool_calls,
-            usage,
-            truncated=truncated,
-            messages=messages[turn_start:],
-            models=models,
+        yield TurnFinished(
+            AgentReply(
+                _text(response.content),
+                tool_calls,
+                usage,
+                truncated=truncated,
+                messages=messages[turn_start:],
+                models=models,
+            )
         )
 
-    def _request(self, messages: Sequence[dict[str, Any]], *, allow_tools: bool) -> Any:
+    def _stream_request(
+        self, messages: Sequence[dict[str, Any]], *, allow_tools: bool
+    ) -> Generator[AgentEvent, None, Any]:
+        """Stream one API request; yields text deltas, returns the final message."""
         extra = {} if allow_tools else {"tool_choice": {"type": "none"}}
         try:
-            return self._client.beta.messages.create(
+            with self._client.beta.messages.stream(
                 model=self._model,
                 max_tokens=self._max_tokens,
                 system=self._system_prompt,
@@ -188,23 +238,15 @@ class Agent:
                 betas=[FALLBACK_BETA],
                 fallbacks="default",
                 **extra,
-            )
-        except anthropic.AuthenticationError as exc:
-            raise AgentError(
-                "Clé API Anthropic invalide ou absente (ANTHROPIC_API_KEY)."
-            ) from exc
-        except anthropic.RateLimitError as exc:
-            raise AgentError(
-                "Limite de débit de l'API Anthropic atteinte, réessaie dans un instant."
-            ) from exc
-        except anthropic.APIStatusError as exc:
-            raise AgentError(
-                f"Erreur de l'API Anthropic ({exc.status_code}) : {exc.message}"
-            ) from exc
-        except anthropic.APIConnectionError as exc:
-            raise AgentError(
-                "Impossible de joindre l'API Anthropic (réseau ou délai dépassé)."
-            ) from exc
+            ) as stream:
+                for event in stream:
+                    if event.type == "text":
+                        yield TextDelta(event.text)
+                    elif _is_fallback_start(event):
+                        yield FallbackRestart()
+                return stream.get_final_message()
+        except anthropic.APIError as exc:
+            raise _agent_error(exc) from exc
 
     def _run_tool(self, block: Any, call: ToolCall) -> dict[str, Any]:
         self._on_tool_call(call)
@@ -229,8 +271,50 @@ def _index_by_name(tools: Sequence[Tool]) -> dict[str, Tool]:
     return dict(zip(names, tools))
 
 
+def _agent_error(exc: anthropic.APIError) -> AgentError:
+    if isinstance(exc, anthropic.AuthenticationError):
+        return AgentError("Clé API Anthropic invalide ou absente (ANTHROPIC_API_KEY).")
+    if isinstance(exc, anthropic.RateLimitError):
+        return AgentError(
+            "Limite de débit de l'API Anthropic atteinte, réessaie dans un instant."
+        )
+    if isinstance(exc, anthropic.APIStatusError):
+        return AgentError(
+            f"Erreur de l'API Anthropic ({exc.status_code}) : {exc.message}"
+        )
+    if isinstance(exc, anthropic.APIConnectionError):
+        return AgentError(
+            "Impossible de joindre l'API Anthropic (réseau ou délai dépassé)."
+        )
+    return AgentError(f"Erreur de l'API Anthropic : {exc}")
+
+
+def _is_fallback_start(event: Any) -> bool:
+    block = getattr(event, "content_block", None)
+    return event.type == "content_block_start" and block.type == "fallback"
+
+
+def _echo_content(content: Sequence[Any]) -> list[Any]:
+    """The assistant blocks to keep, per the server-side fallback rules.
+
+    After a mid-stream fallback, only the declined partial's text blocks are
+    kept before the last `fallback` marker (tool calls and thinking from the
+    declined model must not be sent back); everything after it is kept.
+    """
+    markers = [i for i, block in enumerate(content) if block.type == "fallback"]
+    if not markers:
+        return list(content)
+    last = markers[-1]
+    return [block for block in content[:last] if block.type == "text"] + list(
+        content[last + 1 :]
+    )
+
+
 def _text(content: Sequence[Any]) -> str:
-    return "\n".join(block.text for block in content if block.type == "text").strip()
+    """The answer: text written after the last fallback marker, if any."""
+    markers = [i for i, block in enumerate(content) if block.type == "fallback"]
+    answer = content[markers[-1] + 1 :] if markers else content
+    return "\n".join(block.text for block in answer if block.type == "text").strip()
 
 
 def _has_tool_use(content: Sequence[Any]) -> bool:

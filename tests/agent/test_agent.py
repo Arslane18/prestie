@@ -4,7 +4,14 @@ import anthropic
 import httpx2
 import pytest
 
-from prestie.agent.agent import Agent, AgentError
+from prestie.agent.agent import (
+    Agent,
+    AgentError,
+    FallbackRestart,
+    TextDelta,
+    ToolCallStarted,
+    TurnFinished,
+)
 from prestie.agent.tools import SEARCH_TOOL, ToolOutcome
 
 MODEL = "claude-opus-5"
@@ -39,20 +46,43 @@ def tool_response(*calls: tuple[str, dict]):
     )
 
 
+class FakeStream:
+    """Stands in for the SDK's MessageStream: replays one response as events."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        for block in self._response.content:
+            yield SimpleNamespace(type="content_block_start", content_block=block)
+            if block.type == "text":
+                for word in block.text.split(" "):
+                    yield SimpleNamespace(type="text", text=word + " ")
+
+    def get_final_message(self):
+        return self._response
+
+
 class FakeClient:
-    """Stands in for anthropic.Anthropic: replays scripted responses."""
+    """Stands in for anthropic.Anthropic: replays scripted responses as streams."""
 
     def __init__(self, *responses):
         self._responses = list(responses)
         self.requests: list[dict] = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
+        self.beta = SimpleNamespace(messages=SimpleNamespace(stream=self._stream))
 
-    def _create(self, **kwargs):
+    def _stream(self, **kwargs):
         self.requests.append({**kwargs, "messages": list(kwargs["messages"])})
         response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
-        return response
+        return FakeStream(response)
 
 
 class FakeTool:
@@ -269,3 +299,86 @@ def test_reply_exposes_the_turn_messages_and_served_models():
         "assistant",
     ]
     assert reply.messages[2]["content"][0]["content"] == "PASSAGES"
+
+
+# --- streaming -------------------------------------------------------------------
+
+
+def test_stream_emits_text_deltas_then_the_finished_turn():
+    client = FakeClient(text_response("Hâte d'abord."))
+
+    events = list(make_agent(client).ask_stream("Quelles stats ?"))
+
+    deltas = [e.text for e in events if isinstance(e, TextDelta)]
+    assert "".join(deltas).strip() == "Hâte d'abord."
+    assert isinstance(events[-1], TurnFinished)
+    assert events[-1].reply.text == "Hâte d'abord."
+
+
+def test_stream_announces_tool_calls_between_rounds():
+    client = FakeClient(
+        tool_response(("search_knowledge_base", {"query": "stats"})),
+        text_response("Réponse"),
+    )
+
+    events = list(make_agent(client).ask_stream("q"))
+
+    kinds = [type(e).__name__ for e in events]
+    first_tool = kinds.index("ToolCallStarted")
+    assert "TextDelta" in kinds[:first_tool]  # "Je cherche." streamed first
+    assert events[first_tool].call.input == {"query": "stats"}
+    assert kinds[-1] == "TurnFinished"
+
+
+def test_ask_and_stream_share_history():
+    client = FakeClient(text_response("Réponse 1"), text_response("Réponse 2"))
+    agent = make_agent(client)
+
+    list(agent.ask_stream("q1"))
+    agent.ask("q2")
+
+    assert [m["role"] for m in client.requests[1]["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+
+
+def fallback_response():
+    """A mid-stream decline: partial output, the fallback marker, then the rescue."""
+    return SimpleNamespace(
+        content=[
+            SimpleNamespace(type="text", text="Partial"),
+            SimpleNamespace(type="tool_use", id="t0", name="search_knowledge_base", input={}),
+            SimpleNamespace(type="fallback"),
+            SimpleNamespace(type="text", text="Rescued answer"),
+        ],
+        stop_reason="end_turn",
+        usage=usage(),
+        model="claude-opus-4-8",
+    )
+
+
+def test_mid_stream_fallback_tells_the_consumer_to_restart_the_text():
+    client = FakeClient(fallback_response())
+
+    events = list(make_agent(client).ask_stream("q"))
+
+    kinds = [type(e).__name__ for e in events]
+    assert "FallbackRestart" in kinds
+    after = kinds.index("FallbackRestart")
+    streamed_after = "".join(e.text for e in events[after:] if isinstance(e, TextDelta))
+    assert streamed_after.strip() == "Rescued answer"
+    assert events[-1].reply.text == "Rescued answer"
+
+
+def test_blocks_before_a_fallback_are_not_echoed_except_text():
+    client = FakeClient(fallback_response(), text_response("ok"))
+    agent = make_agent(client)
+
+    agent.ask("q1")
+    agent.ask("q2")
+
+    echoed = client.requests[1]["messages"][1]["content"]
+    assert [block.type for block in echoed] == ["text", "text"]
+    assert [block.text for block in echoed] == ["Partial", "Rescued answer"]
