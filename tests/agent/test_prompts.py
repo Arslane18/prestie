@@ -122,3 +122,16 @@ def test_prompt_lists_every_covered_spec_with_its_search_filter():
     for spec in COVERED_SPECS:
         assert f"{spec.name} (spec={spec.key})" in prompt
     assert "Set the spec filter to the player's spec" in prompt
+
+
+def test_class_wide_questions_keep_the_player_spec_filter():
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    assert "question about the class as a whole still uses the player's spec" in prompt
+
+
+def test_addon_mode_asks_the_spec_when_the_state_is_unavailable():
+    prompt = build_system_prompt(None)
+
+    assert "ask which class and spec the player plays" in prompt
+    assert "instead of answering for every covered spec" in prompt

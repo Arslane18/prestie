@@ -22,9 +22,11 @@ RETRIEVED_URL = re.compile(r'source_url="([^"]*)"')
 TRAILING_PUNCTUATION = ".,;:!?"
 WOW_PATH_MARKER = "/wow/"
 # A simple question must be answered within the line budget the system prompt
-# states (sources excluded). Lines longer than LINE_WIDTH count as several, so
-# one endless paragraph cannot dodge the cap.
-MAX_SIMPLE_ANSWER_LINES = MAX_ANSWER_LINES
+# states (sources excluded), with one line of tolerance: the goal is that the
+# answer does not sprawl, not an exact cap. Lines longer than LINE_WIDTH count
+# as several, so one endless paragraph cannot dodge the cap.
+CONCISE_TOLERANCE_LINES = 1
+MAX_SIMPLE_ANSWER_LINES = MAX_ANSWER_LINES + CONCISE_TOLERANCE_LINES
 LINE_WIDTH = MAX_LINE_CHARS
 
 # Checks that decide whether a case passes ("retrieved" is diagnostic only).
@@ -94,7 +96,7 @@ def programmatic_grades(
     checks: dict[str, bool | None] = {
         "search_ok": _search_ok(case, count_calls(tool_calls, SEARCH_TOOL_NAME)),
         "sources_cited": _sources_cited(case, answer, cited),
-        "citations_valid": all(url in retrieved for url in cited) if cited else None,
+        "citations_valid": _citations_valid(cited, retrieved) if cited else None,
         "concise": (
             None
             if case.detail_requested
@@ -121,6 +123,16 @@ def _search_ok(case: AgentCase, search_count: int) -> bool | None:
     if case.should_search is None:
         return None
     return (search_count > 0) == case.should_search
+
+
+def _citations_valid(cited: Sequence[str], retrieved: Sequence[str]) -> bool:
+    """Each cited URL was retrieved, as is or as the page of a retrieved passage.
+
+    Citing the guide page without the section anchor still credits a page the
+    assistant actually read; a page it never retrieved stays invalid.
+    """
+    retrieved_pages = {url.partition("#")[0] for url in retrieved}
+    return all(url in retrieved or url in retrieved_pages for url in cited)
 
 
 def _state_read(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | None:

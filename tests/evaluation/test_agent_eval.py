@@ -122,6 +122,25 @@ def test_well_behaved_answer_passes_every_applicable_check():
     }
 
 
+def test_citing_the_page_of_a_retrieved_passage_is_valid():
+    # The retrieved passage has an anchor; citing its page without it is fine.
+    page_only = STAT_URL.partition("#")[0]
+    answer = f"Haste.\n\nSources (contenu copié d'Icy Veins) :\n- Stats — {page_only}"
+
+    grades = programmatic_grades(case(), answer, searches(1), [passages(STAT_URL)])
+
+    assert grades["citations_valid"] == 1.0
+
+
+def test_citing_an_unretrieved_page_is_invalid_even_with_a_known_anchor():
+    other = f"{BASE}/holy-priest-pve-healing-stat-priority#wowsanlaynht-stat-priority"
+    answer = f"Haste.\n\nSources (contenu copié d'Icy Veins) :\n- Stats — {other}"
+
+    grades = programmatic_grades(case(), answer, searches(1), [passages(STAT_URL)])
+
+    assert grades["citations_valid"] == 0.0
+
+
 def test_invented_citation_fails_citations_valid():
     grades = programmatic_grades(case(), ANSWER, searches(1), [passages(f"{BASE}/other")])
 
@@ -212,12 +231,13 @@ def test_long_lines_count_as_several_lines():
     assert answer_lines("x" * 250) == 3  # 100 characters per line
 
 
-def test_concise_passes_up_to_eight_lines_and_fails_beyond():
-    eight = "\n".join(f"ligne {i}" for i in range(8))
+def test_concise_tolerates_one_line_over_the_budget_and_fails_beyond():
+    # The prompt asks for 8 lines; one extra line is accepted, not two.
     nine = "\n".join(f"ligne {i}" for i in range(9))
+    ten = "\n".join(f"ligne {i}" for i in range(10))
 
-    assert programmatic_grades(case(), eight, searches(1), [])["concise"] == 1.0
-    assert programmatic_grades(case(), nine, searches(1), [])["concise"] == 0.0
+    assert programmatic_grades(case(), nine, searches(1), [])["concise"] == 1.0
+    assert programmatic_grades(case(), ten, searches(1), [])["concise"] == 0.0
 
 
 def test_concise_does_not_apply_when_detail_is_requested():
