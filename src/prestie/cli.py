@@ -2,7 +2,10 @@
 
 import argparse
 import re
+import shutil
+import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -83,6 +86,9 @@ DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
 DEFAULT_QUEST_CACHE_DIR = Path("data/blizzard/quests")
 DEFAULT_API_PORT = 8000
 LOCALHOST = "127.0.0.1"  # never 0.0.0.0: the API spends the player's API credits
+# Edge "app" window: no address bar, sized as a side panel next to the game.
+COMPANION_WINDOW_SIZE = "440,820"
+WINDOW_OPEN_DELAY_S = 1.5  # let uvicorn start before the page loads
 SNIPPET_CHARS = 300
 EVAL_QUESTION_CHARS = 60
 EVAL_SECTION_CHARS = 55
@@ -237,6 +243,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "serve", help="Run the local API for the companion window (addon mode)"
     )
     serve.add_argument("--port", type=int, default=DEFAULT_API_PORT)
+    serve.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the companion window (Edge app mode, from WSL/Windows)",
+    )
     serve.set_defaults(handler=_serve)
 
     watch = commands.add_parser(
@@ -428,8 +439,39 @@ def _serve(args: argparse.Namespace) -> int:
         watcher_factory=lambda: SavedVariablesWatcher(saved_variables),
     )
     print(f"Prestie sur http://{LOCALHOST}:{args.port} (Ctrl+C pour arrêter)")
+    if args.open:
+        open_companion_window(args.port)
     uvicorn.run(app, host=LOCALHOST, port=args.port)
     return 0
+
+
+def open_companion_window(port: int) -> None:
+    """Launch the window once the server is up (uvicorn.run blocks this thread)."""
+    timer = threading.Timer(WINDOW_OPEN_DELAY_S, _open_or_explain, args=(port,))
+    timer.daemon = True
+    timer.start()
+
+
+def _open_or_explain(port: int) -> None:
+    if not launch_edge_app(port):
+        print(f"Ouvre http://localhost:{port} dans ton navigateur.")
+
+
+def launch_edge_app(port: int) -> bool:
+    """Start Edge in app mode on the Windows side; False when not on WSL/Windows."""
+    powershell = shutil.which("powershell.exe")
+    if powershell is None:
+        return False
+    arguments = f"'--app=http://localhost:{port}','--window-size={COMPANION_WINDOW_SIZE}'"
+    subprocess.Popen(
+        [
+            powershell,
+            "-NoProfile",
+            "-Command",
+            f"Start-Process msedge -ArgumentList {arguments}",
+        ]
+    )
+    return True
 
 
 def _watch(args: argparse.Namespace) -> int:

@@ -21,6 +21,7 @@ local Host headers are accepted, which blocks DNS rebinding.
 import asyncio
 import logging
 import threading
+from pathlib import Path
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -28,8 +29,9 @@ from typing import Annotated, Any, Protocol
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StringConstraints
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -54,6 +56,14 @@ CHARACTER_POLL_INTERVAL_S = 1.0
 SECONDS_PER_MINUTE = 60
 BUSY_MESSAGE = "Une réponse est déjà en cours, attends qu'elle se termine."
 UNEXPECTED_ERROR_MESSAGE = "Erreur inattendue du serveur Prestie (voir ses logs)."
+STATIC_DIR = Path(__file__).parent / "static"
+# Scripts and styles only from our own files: even if model or game text ever
+# reached the page as HTML, no inline script could run.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
 
 Question = Annotated[
     str,
@@ -108,6 +118,17 @@ def create_app(
     _add_error_handlers(app)
     session = ChatSession(agent_factory)
     watcher = watcher_factory()
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        return FileResponse(
+            STATIC_DIR / "index.html",
+            headers={
+                "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.post(
         "/api/chat",

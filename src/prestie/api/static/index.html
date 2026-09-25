@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Prestie</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/style.css" />
+    <script type="module" src="/static/app.js"></script>
+  </head>
+  <body>
+    <header class="character" aria-live="polite">
+      <div class="character-head">
+        <span id="char-name" class="char-name">Prestie</span>
+        <span id="char-class" class="muted"></span>
+      </div>
+      <div id="char-spec" class="muted"></div>
+      <div id="char-quest" class="char-quest"></div>
+      <div id="char-status" class="status" hidden></div>
+    </header>
+
+    <main id="log" class="log" aria-live="polite">
+      <p id="empty" class="empty">
+        Pose une question sur ta quête, ta rotation, tes stats ou tes talents.
+      </p>
+    </main>
+
+    <form id="composer" class="composer">
+      <label for="question" class="visually-hidden">Ta question</label>
+      <textarea
+        id="question"
+        rows="2"
+        maxlength="2000"
+        placeholder="Ta question… (Entrée pour envoyer)"
+        required
+      ></textarea>
+      <div class="actions">
+        <button type="button" id="reset" class="secondary">
+          Nouvelle conversation
+        </button>
+        <button type="submit" id="send">Envoyer</button>
+      </div>
+    </form>
+  </body>
+</html>

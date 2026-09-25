@@ -290,3 +290,47 @@ def test_character_updates_report_a_repeated_error_once():
     events = collect_updates(watcher, 2)
 
     assert [event.event for event in events] == ["error", "state"]
+
+
+# --- page ------------------------------------------------------------------------
+
+
+def test_index_is_served_with_a_strict_content_security_policy(agents):
+    client = make_client(agents)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert '<script type="module" src="/static/app.js">' in response.text
+    policy = response.headers["content-security-policy"]
+    assert "default-src 'self'" in policy
+    assert "script-src 'self'" in policy
+    assert "unsafe-inline" not in policy
+
+
+@pytest.mark.parametrize(
+    "path, media", [("/static/app.js", "javascript"), ("/static/style.css", "css")]
+)
+def test_static_assets_are_served(agents, path, media):
+    response = make_client(agents).get(path)
+
+    assert response.status_code == 200
+    assert media in response.headers["content-type"]
+
+
+def test_ui_helpers_pass_their_node_tests():
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    test_file = Path(__file__).parent / "ui" / "format.test.mjs"
+
+    result = subprocess.run(
+        [node, "--test", str(test_file)], capture_output=True, text=True, timeout=60
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

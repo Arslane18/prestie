@@ -528,3 +528,34 @@ def test_serve_fails_fast_without_addon_config(monkeypatch, capsys):
 
     assert cli.main(["serve"]) == 1
     assert "PRESTIE_SAVEDVARIABLES" in capsys.readouterr().err
+
+
+def test_serve_open_launches_the_edge_app_window(monkeypatch, tmp_path):
+    launched = []
+    monkeypatch.setenv("PRESTIE_SAVEDVARIABLES", str(tmp_path / "Prestie.lua"))
+    monkeypatch.setenv("BLIZZARD_CLIENT_ID", "id")
+    monkeypatch.setenv("BLIZZARD_CLIENT_SECRET", "secret")
+    monkeypatch.setattr(cli, "open_retriever", lambda settings: object())
+    monkeypatch.setattr(cli, "build_anthropic_client", lambda settings: object())
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **kwargs: None)
+    monkeypatch.setattr(cli, "open_companion_window", launched.append)
+
+    assert cli.main(["serve", "--port", "8123", "--open"]) == 0
+    assert launched == [8123]
+
+
+def test_companion_window_command_targets_edge_in_app_mode(monkeypatch):
+    commands = []
+    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/powershell.exe")
+    monkeypatch.setattr(cli.subprocess, "Popen", lambda args: commands.append(args))
+
+    assert cli.launch_edge_app(8123) is True
+    command = commands[0][-1]
+    assert "msedge" in command
+    assert "--app=http://localhost:8123" in command
+
+
+def test_companion_window_is_skipped_without_powershell(monkeypatch):
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+
+    assert cli.launch_edge_app(8123) is False
