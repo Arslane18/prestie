@@ -99,3 +99,16 @@ def test_addon_mode_prompt_explains_quest_details():
 
 def test_manual_mode_prompt_does_not_mention_quest_details():
     assert "get_quest_details" not in build_system_prompt(PlayerContext(level=80))
+
+
+def test_addon_mode_prompt_counts_state_remarks_in_the_line_budget():
+    prompt = build_system_prompt(None)
+
+    assert "counts toward the line budget" in prompt
+
+
+def test_addon_mode_prompt_forbids_guessing_quest_locations():
+    prompt = build_system_prompt(None)
+
+    assert "do not infer where" in prompt
+    assert "interface tips" in prompt
