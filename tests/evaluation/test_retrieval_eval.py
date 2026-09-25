@@ -15,18 +15,31 @@ BASE = "https://www.icy-veins.com/wow"
 SHIPPED_CASES = Path(__file__).parents[2] / "evals" / "retrieval_cases.json"
 
 
-def hit(slug: str, anchor: str | None, distance: float = 0.3) -> SearchHit:
+def hit(
+    slug: str,
+    anchor: str | None,
+    distance: float = 0.3,
+    spec: tuple[str, str] = ("death-knight", "blood"),
+) -> SearchHit:
     url = f"{BASE}/{slug}" + (f"#{anchor}" if anchor else "")
     return SearchHit(
         id=f"{slug}:{anchor}",
         text="...",
-        metadata={"page_slug": slug, "source_url": url, "section": anchor or "Intro"},
+        metadata={
+            "page_slug": slug,
+            "source_url": url,
+            "section": anchor or "Intro",
+            "wow_class": spec[0],
+            "spec": spec[1],
+        },
         distance=distance,
     )
 
 
-def fake_search(results: dict[str, list[SearchHit]]):
-    def search(question: str, n_results: int) -> list[SearchHit]:
+def fake_search(results: dict[str, list[SearchHit]], calls: list | None = None):
+    def search(question: str, n_results: int, where=None) -> list[SearchHit]:
+        if calls is not None:
+            calls.append(where)
         return results[question][:n_results]
 
     return search
@@ -126,3 +139,72 @@ def test_shipped_cases_file_is_valid():
 
     assert len(cases) >= 10
     assert any(not case.answerable for case in cases)
+
+
+# --- spec ------------------------------------------------------------------------
+
+SHADOW = ("priest", "shadow")
+
+
+def test_spec_precision_is_the_share_of_top_k_from_the_case_spec():
+    case = RetrievalCase("stats?", expected=("s#a",), spec="shadow-priest")
+    hits = [hit("s", "a", spec=SHADOW), hit("dk", "x"), hit("s", "b", spec=SHADOW), hit("dk", "y")]
+
+    report = evaluate([case], fake_search({"stats?": hits}), k=4)
+
+    assert report.spec_precision(4) == 0.5
+    assert report.spec_precision(1) == 1.0
+
+
+def test_spec_precision_ignores_cases_without_spec():
+    with_spec = RetrievalCase("a", expected=("s#a",), spec="shadow-priest")
+    without = RetrievalCase("b", expected=("dk#x",))
+    search = fake_search({"a": [hit("dk", "x")], "b": [hit("dk", "x")]})
+
+    assert evaluate([with_spec, without], search, k=1).spec_precision(1) == 0.0
+
+
+def test_spec_filter_mode_passes_the_case_spec_as_a_where_clause():
+    calls = []
+    cases = [
+        RetrievalCase("a", expected=("s#a",), spec="shadow-priest"),
+        RetrievalCase("b", expected=("dk#x",)),
+    ]
+    search = fake_search({"a": [], "b": []}, calls)
+
+    evaluate(cases, search, k=3, spec_filter=True)
+
+    assert calls == [{"$and": [{"wow_class": "priest"}, {"spec": "shadow"}]}, None]
+
+
+def test_without_spec_filter_mode_nothing_is_filtered():
+    calls = []
+    case = RetrievalCase("a", expected=("s#a",), spec="shadow-priest")
+
+    evaluate([case], fake_search({"a": []}, calls), k=3)
+
+    assert calls == [None]
+
+
+def test_case_spec_is_loaded_and_validated(tmp_path):
+    path = tmp_path / "cases.json"
+    path.write_text(
+        json.dumps([{"question": "q", "expected": [], "spec": "holy-priest"}]),
+        encoding="utf-8",
+    )
+    assert load_cases(path)[0].spec == "holy-priest"
+
+    path.write_text(
+        json.dumps([{"question": "q", "expected": [], "spec": "frost-mage"}]),
+        encoding="utf-8",
+    )
+    with pytest.raises(EvalCaseError, match="spec"):
+        load_cases(path)
+
+
+def test_shipped_cases_cover_every_spec():
+    from prestie.catalog import COVERED_SPECS
+
+    cases = load_cases(SHIPPED_CASES)
+
+    assert {case.spec for case in cases} == {spec.key for spec in COVERED_SPECS}

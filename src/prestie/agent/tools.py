@@ -12,9 +12,10 @@ from dataclasses import dataclass
 from html import escape
 from typing import Any, Protocol
 
-from prestie.catalog import COVERED_SPECS, spec_by_key
+from prestie.catalog import COVERED_SPECS
 from prestie.ingestion.icy_veins.pages import ALL_PAGES
 from prestie.knowledge.embeddings import EmbeddingError
+from prestie.knowledge.filters import metadata_filter
 from prestie.knowledge.store import SearchHit
 
 SEARCH_TOOL_NAME = "search_knowledge_base"
@@ -116,7 +117,7 @@ class KnowledgeBaseTool:
         if error:
             return ToolOutcome(error, is_error=True)
         query = tool_input["query"].strip()
-        where = _where(tool_input.get("spec"), tool_input.get("content_type"))
+        where = metadata_filter(tool_input.get("spec"), tool_input.get("content_type"))
         try:
             hits = self._retriever.search(query, n_results=self._n_results, where=where)
         except EmbeddingError as exc:
@@ -140,18 +141,6 @@ def _validate(tool_input: Mapping[str, Any]) -> str | None:
             f"Valid values: {', '.join(CONTENT_TYPES)}."
         )
     return None
-
-
-def _where(spec_key: str | None, content_type: str | None) -> dict[str, Any] | None:
-    """Chroma metadata filter; several conditions must be wrapped in $and."""
-    guide = spec_by_key(spec_key) if spec_key else None
-    conditions = [
-        *([{"wow_class": guide.wow_class}, {"spec": guide.spec}] if guide else []),
-        *([{"content_type": content_type}] if content_type else []),
-    ]
-    if not conditions:
-        return None
-    return conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
 
 def format_results(query: str, hits: Sequence[SearchHit]) -> str:

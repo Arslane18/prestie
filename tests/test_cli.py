@@ -588,3 +588,27 @@ def test_search_labels_show_the_spec_and_content_type_filters():
     )
 
     assert cli.format_tool_call(call) == "  [recherche] aoe [shadow-priest] [rotation]"
+
+
+def test_eval_reports_spec_precision_and_can_filter_by_spec(knowledge_env, tmp_path, capsys):
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps(
+            [
+                {
+                    "question": "stats",
+                    "expected": ["shadow-priest-pve-dps-stat-priority"],
+                    "spec": "shadow-priest",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    cli.main(["eval", "--cases", str(cases), "-k", "5", "--spec-filter"])
+
+    out = capsys.readouterr().out
+    assert "spec_precision@5 = 1.00" in out
+    assert "spec filter on" in out

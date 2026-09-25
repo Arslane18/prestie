@@ -42,3 +42,33 @@ def test_search_embeds_the_question_as_a_query_and_returns_hits(tmp_path):
     assert [
         hit.id for hit in retriever.search("x", where={"content_type": "rotation"})
     ] == ["p:0"]
+
+
+class FakeReranker:
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def rerank(self, query, hits, top_k):
+        self.calls.append((query, [h.id for h in hits], top_k))
+        return list(reversed(hits))[:top_k]
+
+
+def test_reranking_retrieves_more_candidates_then_keeps_the_best(tmp_path):
+    store = KnowledgeStore.open(
+        chromadb.PersistentClient(path=str(tmp_path)), embedding_model="fake"
+    )
+    store.replace_page(
+        "p",
+        ids=[f"p:{i}" for i in range(4)],
+        texts=[f"chunk {i}" for i in range(4)],
+        embeddings=[[1.0, 0.1 * i] for i in range(4)],
+        metadatas=[{"page_slug": "p", "content_type": "rotation"}] * 4,
+    )
+    reranker = FakeReranker()
+    retriever = Retriever(FakeEmbedder(), store, reranker=reranker, candidates=3)
+
+    hits = retriever.search("rune", n_results=2)
+
+    [(query, candidate_ids, top_k)] = reranker.calls
+    assert (query, len(candidate_ids), top_k) == ("rune", 3, 2)
+    assert [h.id for h in hits] == list(reversed(candidate_ids))[:2]

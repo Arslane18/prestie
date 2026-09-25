@@ -10,17 +10,27 @@ Metrics, over answerable cases:
   - hit@k: share of questions whose first relevant chunk ranks <= k
   - MRR (mean reciprocal rank): average of 1/rank (0 when not found);
     1.0 means the right source always comes first.
+And over cases tagged with a spec:
+  - spec_precision@k: share of the top-k chunks that come from that spec. The
+    rank metrics only look at the first relevant chunk; this one sees the
+    other specs' passages that still crowd the context sent to the model.
+
+With `spec_filter=True`, each case's spec is passed as a metadata filter, the
+way the agent searches; without it, every spec competes.
 """
 
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from prestie.catalog import spec_by_key
+from prestie.knowledge.filters import metadata_filter
 from prestie.knowledge.store import SearchHit
 
-SearchFn = Callable[[str, int], Sequence[SearchHit]]
+# (question, number of results, metadata filter or None) -> hits
+SearchFn = Callable[[str, int, Mapping[str, Any] | None], Sequence[SearchHit]]
 
 
 class EvalCaseError(Exception):
@@ -32,6 +42,7 @@ class RetrievalCase:
     question: str
     expected: tuple[str, ...]
     note: str = ""
+    spec: str | None = None  # catalog key of the spec the question is about
 
     @property
     def answerable(self) -> bool:
@@ -73,6 +84,12 @@ class EvalReport:
         hits = sum(1 for r in answerable if r.rank is not None and r.rank <= at)
         return hits / len(answerable)
 
+    def spec_precision(self, at: int) -> float:
+        with_spec = [r for r in self.results if r.case.spec is not None]
+        if not with_spec:
+            return 0.0
+        return sum(_spec_share(r, at) for r in with_spec) / len(with_spec)
+
     @property
     def mrr(self) -> float:
         answerable = self._answerable
@@ -81,17 +98,43 @@ class EvalReport:
         return sum(1 / r.rank if r.rank else 0.0 for r in answerable) / len(answerable)
 
 
-def evaluate(cases: Iterable[RetrievalCase], search: SearchFn, k: int) -> EvalReport:
-    return EvalReport(k=k, results=tuple(_evaluate_case(c, search, k) for c in cases))
+def evaluate(
+    cases: Iterable[RetrievalCase],
+    search: SearchFn,
+    k: int,
+    *,
+    spec_filter: bool = False,
+) -> EvalReport:
+    return EvalReport(
+        k=k,
+        results=tuple(_evaluate_case(c, search, k, spec_filter) for c in cases),
+    )
 
 
-def _evaluate_case(case: RetrievalCase, search: SearchFn, k: int) -> CaseResult:
-    hits = tuple(search(case.question, k))
+def _evaluate_case(
+    case: RetrievalCase, search: SearchFn, k: int, spec_filter: bool
+) -> CaseResult:
+    where = metadata_filter(case.spec) if spec_filter else None
+    hits = tuple(search(case.question, k, where))
     rank = next(
         (i for i, hit in enumerate(hits, start=1) if _matches(hit, case.expected)),
         None,
     )
     return CaseResult(case=case, rank=rank, hits=hits)
+
+
+def _spec_share(result: CaseResult, at: int) -> float:
+    guide = spec_by_key(result.case.spec or "")
+    top = result.hits[:at]
+    if guide is None or not top:
+        return 0.0
+    same = sum(
+        1
+        for hit in top
+        if (hit.metadata.get("wow_class"), hit.metadata.get("spec"))
+        == (guide.wow_class, guide.spec)
+    )
+    return same / len(top)
 
 
 def source_key(hit: SearchHit) -> str:
@@ -126,6 +169,12 @@ def _parse_case(entry: Any, index: int, path: Path) -> RetrievalCase:
         raise EvalCaseError(f"{where}: 'question' must be a non-empty string")
     if not isinstance(expected, list) or not all(isinstance(e, str) for e in expected):
         raise EvalCaseError(f"{where}: 'expected' must be a list of strings")
+    spec = entry.get("spec")
+    if spec is not None and (not isinstance(spec, str) or spec_by_key(spec) is None):
+        raise EvalCaseError(f"{where}: 'spec' {spec!r} is not a covered spec")
     return RetrievalCase(
-        question=question, expected=tuple(expected), note=str(entry.get("note", ""))
+        question=question,
+        expected=tuple(expected),
+        note=str(entry.get("note", "")),
+        spec=spec,
     )

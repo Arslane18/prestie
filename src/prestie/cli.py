@@ -228,6 +228,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     evaluation.add_argument("--cases", type=Path, default=DEFAULT_EVAL_CASES)
     evaluation.add_argument("-k", type=int, default=DEFAULT_RESULTS)
+    evaluation.add_argument(
+        "--spec-filter",
+        action="store_true",
+        help="Filter each search on the case's spec, as the agent does",
+    )
     evaluation.set_defaults(handler=_eval)
 
     chat = commands.add_parser("chat", help="Ask the Blood DK assistant (Claude + RAG)")
@@ -353,15 +358,17 @@ def _eval(args: argparse.Namespace) -> int:
     try:
         cases = load_cases(args.cases)
         retriever = open_retriever(load_settings())
-        report = evaluate(cases, retriever.search, k=args.k)
+        report = evaluate(
+            cases, retriever.search, k=args.k, spec_filter=args.spec_filter
+        )
     except KNOWLEDGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(_format_report(report))
+    print(_format_report(report, spec_filter=args.spec_filter))
     return 0
 
 
-def _format_report(report: EvalReport) -> str:
+def _format_report(report: EvalReport, *, spec_filter: bool = False) -> str:
     lines = [f"{'rank':>4}  {'question':<{EVAL_QUESTION_CHARS}}  top result (distance)"]
     lines.extend(_format_case(result) for result in report.results)
     cutoffs = sorted({1, 3, report.k})
@@ -369,6 +376,10 @@ def _format_report(report: EvalReport) -> str:
     lines.append(
         f"\n{rates} | MRR = {report.mrr:.2f}  "
         f"({report.answerable_count} answerable questions, k={report.k})"
+    )
+    lines.append(
+        f"spec_precision@{report.k} = {report.spec_precision(report.k):.2f} "
+        f"(spec filter {'on' if spec_filter else 'off'})"
     )
     return "\n".join(lines)
 
