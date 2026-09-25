@@ -13,6 +13,22 @@ const BOLD = /\*\*(.+?)\*\*/g;
 // and trailing punctuation is left outside the link.
 const URL = /https?:\/\/[^\s<]+?(?=[.,;:!?)]*(?:\s|$|<|&quot;|&#39;))/g;
 const MS_PER_MINUTE = 60_000;
+// Official WoW class colors, keyed by the language-independent class token.
+const CLASS_COLORS = {
+  DEATHKNIGHT: "#C41E3A",
+  DEMONHUNTER: "#A330C9",
+  DRUID: "#FF7C0A",
+  EVOKER: "#33937F",
+  HUNTER: "#AAD372",
+  MAGE: "#3FC7EB",
+  MONK: "#00FF98",
+  PALADIN: "#F48CBA",
+  PRIEST: "#FFFFFF",
+  ROGUE: "#FFF468",
+  SHAMAN: "#0070DD",
+  WARLOCK: "#8788EE",
+  WARRIOR: "#C69B6D",
+};
 
 export function escapeHtml(text) {
   return text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
@@ -78,4 +94,16 @@ function parseBlock(block) {
 
 export function ageMinutes(capturedAt, now = Date.now()) {
   return Math.max(0, Math.floor((now - Date.parse(capturedAt)) / MS_PER_MINUTE));
+}
+
+/** The class color for a class token ("DEATHKNIGHT"), or null if unknown. */
+export function classColor(token) {
+  return CLASS_COLORS[token] ?? null;
+}
+
+/** "[recherche] stat priority" -> "Recherche : stat priority" (CLI tags off). */
+export function stepLabel(text) {
+  const match = text.match(/^\[([^\]]+)\]\s*(.*)$/s);
+  const label = match ? `${match[1]}\u00a0: ${match[2]}` : text;
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }

@@ -9,37 +9,86 @@
     <script type="module" src="/static/app.js"></script>
   </head>
   <body>
+    <!-- Title bar: the native window is frameless, so the page draws its own.
+         Only elements with pywebview-drag-region move the window. -->
+    <div class="titlebar">
+      <div class="brand pywebview-drag-region">
+        <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 1 15 8 8 15 1 8Z" />
+        </svg>
+        <span class="pywebview-drag-region">Prestie</span>
+      </div>
+      <div class="spacer pywebview-drag-region"></div>
+      <button type="button" id="reset" class="icon-button" title="Nouvelle conversation">
+        <svg viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 3.5v9M3.5 8h9" />
+        </svg>
+        <span class="visually-hidden">Nouvelle conversation</span>
+      </button>
+      <div class="window-controls" hidden>
+        <button type="button" id="pin" class="icon-button active" title="Toujours au premier plan" aria-pressed="true">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M6 2.5h4M7 2.5v4L4.5 9.5h7L9 6.5v-4M8 9.5v4" />
+          </svg>
+          <span class="visually-hidden">Toujours au premier plan</span>
+        </button>
+        <button type="button" id="minimize" class="icon-button" title="Réduire">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8.5h8" /></svg>
+          <span class="visually-hidden">Réduire</span>
+        </button>
+        <button type="button" id="close" class="icon-button close" title="Fermer">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+          </svg>
+          <span class="visually-hidden">Fermer</span>
+        </button>
+      </div>
+    </div>
+
     <header class="character" aria-live="polite">
       <div class="character-head">
-        <span id="char-name" class="char-name">Prestie</span>
-        <span id="char-class" class="muted"></span>
+        <span id="char-name" class="char-name">En attente du personnage…</span>
+        <span id="char-level" class="level" hidden></span>
       </div>
-      <div id="char-spec" class="muted"></div>
-      <div id="char-quest" class="char-quest"></div>
+      <div id="char-spec" class="char-spec"></div>
+      <div id="char-quest" class="char-quest" hidden>
+        <span class="label">Quête suivie</span>
+        <span id="char-quest-title" class="quest-title"></span>
+      </div>
       <div id="char-status" class="status" hidden></div>
     </header>
 
-    <main id="log" class="log" aria-live="polite">
-      <p id="empty" class="empty">
-        Pose une question sur ta quête, ta rotation, tes stats ou tes talents.
-      </p>
-    </main>
+    <main id="log" class="log" aria-live="polite"></main>
 
     <form id="composer" class="composer">
       <label for="question" class="visually-hidden">Ta question</label>
-      <textarea
-        id="question"
-        rows="2"
-        maxlength="2000"
-        placeholder="Ta question… (Entrée pour envoyer)"
-        required
-      ></textarea>
-      <div class="actions">
-        <button type="button" id="reset" class="secondary">
-          Nouvelle conversation
+      <div class="input-wrap">
+        <textarea
+          id="question"
+          rows="1"
+          maxlength="2000"
+          placeholder="Pose ta question…"
+          required
+        ></textarea>
+        <button type="submit" id="send" class="send" title="Envoyer (Entrée)">
+          <svg viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M8 13V3.5M3.5 8 8 3.5 12.5 8" />
+          </svg>
+          <span class="visually-hidden">Envoyer</span>
         </button>
-        <button type="submit" id="send">Envoyer</button>
       </div>
     </form>
+
+    <template id="empty-state">
+      <div class="empty">
+        <p class="empty-title">Que veux-tu savoir&nbsp;?</p>
+        <p class="empty-text">Je lis ton personnage depuis l'addon&nbsp;: pas besoin de me donner ton niveau ou ta spé.</p>
+        <div class="suggestions">
+          <button type="button" class="suggestion">C'est quoi ma quête en cours&nbsp;?</button>
+          <button type="button" class="suggestion">Quelle stat secondaire je monte en priorité&nbsp;?</button>
+          <button type="button" class="suggestion">C'est quoi la rotation de base&nbsp;?</button>
+        </div>
+      </div>
+    </template>
   </body>
 </html>

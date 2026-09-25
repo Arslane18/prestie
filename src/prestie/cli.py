@@ -86,8 +86,8 @@ DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
 DEFAULT_QUEST_CACHE_DIR = Path("data/blizzard/quests")
 DEFAULT_API_PORT = 8000
 LOCALHOST = "127.0.0.1"  # never 0.0.0.0: the API spends the player's API credits
-# Edge "app" window: no address bar, sized as a side panel next to the game.
-COMPANION_WINDOW_SIZE = "440,820"
+# Native Windows window (pywebview), run with Windows' own uv.
+WINDOW_LAUNCHER = Path(__file__).resolve().parents[2] / "desktop" / "prestie_window.py"
 WINDOW_OPEN_DELAY_S = 1.5  # let uvicorn start before the page loads
 SNIPPET_CHARS = 300
 EVAL_QUESTION_CHARS = 60
@@ -246,7 +246,7 @@ def _build_parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--open",
         action="store_true",
-        help="Open the companion window (Edge app mode, from WSL/Windows)",
+        help="Open the native companion window (Windows, via WSL)",
     )
     serve.set_defaults(handler=_serve)
 
@@ -453,22 +453,29 @@ def open_companion_window(port: int) -> None:
 
 
 def _open_or_explain(port: int) -> None:
-    if not launch_edge_app(port):
+    if not launch_native_window(port):
         print(f"Ouvre http://localhost:{port} dans ton navigateur.")
 
 
-def launch_edge_app(port: int) -> bool:
-    """Start Edge in app mode on the Windows side; False when not on WSL/Windows."""
+def launch_native_window(port: int) -> bool:
+    """Run desktop/prestie_window.py with Windows' uv; False when not on WSL."""
     powershell = shutil.which("powershell.exe")
-    if powershell is None:
+    wslpath = shutil.which("wslpath")
+    if powershell is None or wslpath is None:
         return False
-    arguments = f"'--app=http://localhost:{port}','--window-size={COMPANION_WINDOW_SIZE}'"
+    converted = subprocess.run(
+        [wslpath, "-w", str(WINDOW_LAUNCHER)], capture_output=True, text=True
+    )
+    script = converted.stdout.strip()
+    if converted.returncode != 0 or not script:
+        return False
+    arguments = f"'run','{script}','--url','http://localhost:{port}'"
     subprocess.Popen(
         [
             powershell,
             "-NoProfile",
             "-Command",
-            f"Start-Process msedge -ArgumentList {arguments}",
+            f"Start-Process uv -WindowStyle Hidden -ArgumentList {arguments}",
         ]
     )
     return True

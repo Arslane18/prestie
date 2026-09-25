@@ -4,9 +4,11 @@ import { test } from "node:test";
 
 import {
   ageMinutes,
+  classColor,
   createSseParser,
   escapeHtml,
   renderMarkdown,
+  stepLabel,
 } from "../../../src/prestie/api/static/format.js";
 
 test("escapeHtml neutralizes markup", () => {
@@ -68,4 +70,17 @@ test("ageMinutes counts whole minutes and never goes negative", () => {
   const now = Date.parse("2026-09-25T20:00:00Z");
   assert.equal(ageMinutes("2026-09-25T19:47:30+00:00", now), 12);
   assert.equal(ageMinutes("2026-09-25T20:05:00+00:00", now), 0);
+});
+
+test("classColor uses the official class colors and a gold fallback", () => {
+  assert.equal(classColor("DEATHKNIGHT"), "#C41E3A");
+  assert.equal(classColor("PRIEST"), "#FFFFFF");
+  assert.equal(classColor("UNKNOWN"), null);
+  assert.equal(classColor(undefined), null);
+});
+
+test("stepLabel turns CLI tags into readable labels", () => {
+  assert.equal(stepLabel("[recherche] stat priority"), "Recherche\u00a0: stat priority");
+  assert.equal(stepLabel("[quête] détails de la quête 55881"), "Quête\u00a0: détails de la quête 55881");
+  assert.equal(stepLabel("je vérifie d'abord"), "Je vérifie d'abord");
 });

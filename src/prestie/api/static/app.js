@@ -1,5 +1,11 @@
-// Companion window: streamed chat + live character banner.
-import { ageMinutes, createSseParser, renderMarkdown } from "./format.js";
+// Companion window: streamed chat, live character card, native window controls.
+import {
+  ageMinutes,
+  classColor,
+  createSseParser,
+  renderMarkdown,
+  stepLabel,
+} from "./format.js";
 
 const API_HEADERS = {
   "Content-Type": "application/json",
@@ -7,57 +13,74 @@ const API_HEADERS = {
 };
 const STALE_AFTER_MINUTES = 30;
 const AGE_REFRESH_MS = 30_000;
+const MAX_INPUT_HEIGHT_PX = 140;
 
 const $ = (id) => document.getElementById(id);
 const log = $("log");
 const question = $("question");
 let character = null; // last state received, re-rendered as it ages
+let busy = false;
 
-// --- character banner -----------------------------------------------------------
+// --- character card -------------------------------------------------------------
 
 function renderCharacter() {
   if (!character) return;
   const c = character;
-  $("char-name").textContent = c.character;
-  $("char-class").textContent = `${c.class_name} niv. ${c.level}`;
-  const spec = c.spec?.name ?? "sans spécialisation";
+  const color = classColor(c.class_token);
+  document.documentElement.style.setProperty("--class", color ?? "var(--gold)");
+  $("char-name").textContent = `${c.character} · ${c.realm}`;
+  $("char-level").hidden = false;
+  $("char-level").textContent = `Niv. ${c.level}`;
+  const spec = c.spec?.name ?? "Sans spécialisation";
   const hero = c.hero_talent ? ` · ${c.hero_talent}` : "";
-  const coverage = c.covered_by_knowledge_base
-    ? ""
-    : " · guides : DK Sang uniquement";
-  $("char-spec").textContent = spec + hero + coverage;
-  $("char-quest").textContent = c.active_quest
-    ? `Quête suivie : ${c.active_quest.title ?? c.active_quest.id}`
-    : "Aucune quête suivie";
-  const age = ageMinutes(c.captured_at);
-  const stale = age >= STALE_AFTER_MINUTES;
-  setStatus(
-    stale
-      ? `État d'il y a ${age} min : tape /prestie sync en jeu pour l'actualiser.`
-      : `État d'il y a ${age} min.`,
-    stale ? "warn" : "",
-  );
+  $("char-spec").textContent = `${c.class_name} · ${spec}${hero}`;
+  $("char-quest").hidden = !c.active_quest;
+  $("char-quest-title").textContent = c.active_quest?.title ?? "";
+  renderAge(c);
 }
 
-function setStatus(text, kind) {
+function renderAge(c) {
+  const age = ageMinutes(c.captured_at);
+  const when = age < 1 ? "à l'instant" : `il y a ${formatDuration(age)}`;
   const status = $("char-status");
-  status.hidden = !text;
-  status.textContent = text;
-  status.className = `status ${kind}`.trim();
+  status.hidden = false;
+  status.replaceChildren(`Exporté ${when}`);
+  status.className = "status";
+  if (age >= STALE_AFTER_MINUTES) {
+    status.className = "status warn";
+    const command = document.createElement("code");
+    command.textContent = "/prestie sync";
+    status.append(" · ", command, " en jeu");
+  }
+  if (!c.covered_by_knowledge_base) {
+    status.append(" · guides DK Sang uniquement");
+  }
+}
+
+function formatDuration(minutes) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  return hours < 24 ? `${hours} h` : `${Math.floor(hours / 24)} j`;
+}
+
+function showCharacterError(message) {
+  const status = $("char-status");
+  status.hidden = false;
+  status.className = "status error";
+  status.textContent = message;
 }
 
 async function loadCharacter() {
   try {
-    const response = await fetch("/api/character");
-    const body = await response.json();
+    const body = await (await fetch("/api/character")).json();
     if (body.success) {
       character = body.data;
       renderCharacter();
     } else {
-      setStatus(body.error, "error");
+      showCharacterError(body.error);
     }
   } catch {
-    setStatus("Serveur Prestie injoignable.", "error");
+    showCharacterError("Serveur Prestie injoignable.");
   }
 }
 
@@ -69,45 +92,56 @@ function watchCharacter() {
     renderCharacter();
   });
   source.addEventListener("error", (event) => {
-    if (event.data) setStatus(JSON.parse(event.data).message, "error");
+    // Our "error" events carry data; the browser's connection errors do not.
+    if (event.data) showCharacterError(JSON.parse(event.data).message);
   });
 }
 
 // --- conversation ---------------------------------------------------------------
 
-function addBubble(className) {
-  $("empty")?.remove();
-  const bubble = document.createElement("div");
-  bubble.className = `bubble ${className}`;
-  log.append(bubble);
-  return bubble;
+function showEmptyState() {
+  log.replaceChildren($("empty-state").content.cloneNode(true));
+  for (const button of log.querySelectorAll(".suggestion")) {
+    // Normalize the non-breaking spaces used for French typography.
+    const text = button.textContent.replace(/\u00a0/g, " ");
+    button.addEventListener("click", () => ask(text));
+  }
+}
+
+function addMessage(kind) {
+  log.querySelector(".empty")?.remove();
+  const message = document.createElement("div");
+  message.className = `message ${kind}`;
+  log.append(message);
+  return message;
 }
 
 function scrollToEnd() {
   log.scrollTop = log.scrollHeight;
 }
 
-/** One assistant answer: collapsible steps (tool calls, notes) + the text. */
+/** One assistant answer: folded steps (tool calls, interim notes) + the text. */
 function createTurn() {
-  const bubble = addBubble("assistant");
+  const message = addMessage("assistant");
   const steps = document.createElement("details");
-  steps.className = "steps";
+  steps.className = "steps running";
   steps.hidden = true;
   const summary = document.createElement("summary");
   const list = document.createElement("ol");
   steps.append(summary, list);
   const answer = document.createElement("div");
   answer.className = "answer pending";
-  bubble.append(steps, answer);
+  message.append(steps, answer);
 
   return {
     addStep(text, kind) {
+      const label = stepLabel(text);
       const item = document.createElement("li");
-      item.textContent = text;
+      item.textContent = label;
       if (kind === "note") item.className = "note";
       list.append(item);
       steps.hidden = false;
-      summary.textContent = text; // the latest step, while it runs
+      summary.textContent = label; // the current step, while it runs
       scrollToEnd();
     },
     showAnswer(text) {
@@ -116,31 +150,34 @@ function createTurn() {
     },
     finish(reply) {
       answer.classList.remove("pending");
+      steps.classList.remove("running");
       answer.innerHTML = renderMarkdown(reply.text);
       const count = list.children.length;
       summary.textContent = `${count} étape${count > 1 ? "s" : ""}`;
-      if (reply.truncated) addNotice(bubble, "Réponse tronquée (limite de longueur).");
+      if (reply.truncated) addNotice(message, "Réponse tronquée (limite de longueur).");
       scrollToEnd();
     },
-    fail(message) {
+    fail(text) {
       answer.classList.remove("pending");
-      bubble.classList.add("error");
-      answer.textContent = message;
+      steps.classList.remove("running");
+      message.classList.add("error");
+      answer.textContent = text;
       scrollToEnd();
     },
   };
 }
 
-function addNotice(bubble, text) {
+function addNotice(message, text) {
   const notice = document.createElement("p");
   notice.className = "notice";
   notice.textContent = text;
-  bubble.append(notice);
+  message.append(notice);
 }
 
 async function ask(text) {
+  if (busy) return;
   setBusy(true);
-  addBubble("user").textContent = text;
+  addMessage("user").textContent = text;
   const turn = createTurn();
   // Text streamed since the last tool call: an interim note until the answer.
   let roundText = "";
@@ -191,11 +228,12 @@ async function ask(text) {
   }
 }
 
-function setBusy(busy) {
-  $("send").disabled = busy;
-  $("reset").disabled = busy;
-  question.disabled = busy;
-  if (!busy) question.focus();
+function setBusy(value) {
+  busy = value;
+  $("send").disabled = value;
+  $("reset").disabled = value;
+  question.disabled = value;
+  if (!value) question.focus();
 }
 
 async function resetConversation() {
@@ -203,13 +241,28 @@ async function resetConversation() {
     method: "POST",
     headers: API_HEADERS,
   }).catch(() => null);
-  if (!response?.ok) return;
-  log.replaceChildren();
-  const empty = document.createElement("p");
-  empty.id = "empty";
-  empty.className = "empty";
-  empty.textContent = "Nouvelle conversation.";
-  log.append(empty);
+  if (response?.ok) showEmptyState();
+}
+
+function autoGrow() {
+  question.style.height = "auto";
+  question.style.height = `${Math.min(question.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`;
+}
+
+// --- native window (pywebview) --------------------------------------------------
+
+function enableWindowControls() {
+  const api = window.pywebview?.api;
+  if (!api) return;
+  document.querySelector(".window-controls").hidden = false;
+  const pin = $("pin");
+  pin.addEventListener("click", async () => {
+    const onTop = await api.set_on_top(pin.getAttribute("aria-pressed") !== "true");
+    pin.setAttribute("aria-pressed", String(onTop));
+    pin.classList.toggle("active", onTop);
+  });
+  $("minimize").addEventListener("click", () => api.minimize());
+  $("close").addEventListener("click", () => api.close());
 }
 
 // --- wiring ---------------------------------------------------------------------
@@ -219,6 +272,7 @@ $("composer").addEventListener("submit", (event) => {
   const text = question.value.trim();
   if (!text) return;
   question.value = "";
+  autoGrow();
   ask(text);
 });
 
@@ -228,10 +282,14 @@ question.addEventListener("keydown", (event) => {
     $("composer").requestSubmit();
   }
 });
-
+question.addEventListener("input", autoGrow);
 $("reset").addEventListener("click", resetConversation);
+// pywebview injects window.pywebview after the page loads, then fires this.
+window.addEventListener("pywebviewready", enableWindowControls);
+enableWindowControls();
 
+showEmptyState();
 loadCharacter();
 watchCharacter();
-setInterval(renderCharacter, AGE_REFRESH_MS);
+setInterval(() => character && renderAge(character), AGE_REFRESH_MS);
 question.focus();

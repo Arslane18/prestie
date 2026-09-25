@@ -530,7 +530,7 @@ def test_serve_fails_fast_without_addon_config(monkeypatch, capsys):
     assert "PRESTIE_SAVEDVARIABLES" in capsys.readouterr().err
 
 
-def test_serve_open_launches_the_edge_app_window(monkeypatch, tmp_path):
+def test_serve_open_launches_the_companion_window(monkeypatch, tmp_path):
     launched = []
     monkeypatch.setenv("PRESTIE_SAVEDVARIABLES", str(tmp_path / "Prestie.lua"))
     monkeypatch.setenv("BLIZZARD_CLIENT_ID", "id")
@@ -544,18 +544,26 @@ def test_serve_open_launches_the_edge_app_window(monkeypatch, tmp_path):
     assert launched == [8123]
 
 
-def test_companion_window_command_targets_edge_in_app_mode(monkeypatch):
+def test_companion_window_runs_the_native_launcher_with_windows_uv(monkeypatch):
     commands = []
-    monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/powershell.exe")
+    monkeypatch.setattr(cli.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda args, **kwargs: cli.subprocess.CompletedProcess(
+            args, 0, stdout="\\\\wsl.localhost\\Ubuntu\\prestie_window.py\n"
+        ),
+    )
     monkeypatch.setattr(cli.subprocess, "Popen", lambda args: commands.append(args))
 
-    assert cli.launch_edge_app(8123) is True
+    assert cli.launch_native_window(8123) is True
     command = commands[0][-1]
-    assert "msedge" in command
-    assert "--app=http://localhost:8123" in command
+    assert command.startswith("Start-Process uv")
+    assert "\\\\wsl.localhost\\Ubuntu\\prestie_window.py" in command
+    assert "http://localhost:8123" in command
 
 
 def test_companion_window_is_skipped_without_powershell(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
 
-    assert cli.launch_edge_app(8123) is False
+    assert cli.launch_native_window(8123) is False
