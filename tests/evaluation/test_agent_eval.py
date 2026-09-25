@@ -681,3 +681,52 @@ def test_runner_grades_state_reads_in_addon_cases(tmp_path):
         "name": "get_character_state",
         "content": "STATE",
     }
+
+
+# --- spec filter -----------------------------------------------------------------
+
+
+def searches_with(*specs):
+    return tuple(
+        ToolCall("search_knowledge_base", {"query": "q", **({"spec": s} if s else {})})
+        for s in specs
+    )
+
+
+def test_spec_filter_requires_every_search_to_target_the_expected_spec():
+    shadow = addon_case(expected_spec="shadow-priest")
+
+    good = programmatic_grades(shadow, "x", searches_with("shadow-priest"), [])
+    unfiltered = programmatic_grades(shadow, "x", searches_with("shadow-priest", None), [])
+    wrong = programmatic_grades(shadow, "x", searches_with("holy-priest"), [])
+
+    assert good["spec_filter"] == 1.0
+    assert unfiltered["spec_filter"] == 0.0
+    assert wrong["spec_filter"] == 0.0
+
+
+def test_spec_filter_does_not_apply_without_searches_or_expectation():
+    assert "spec_filter" not in programmatic_grades(
+        addon_case(expected_spec="shadow-priest"), "x", (), []
+    )
+    assert "spec_filter" not in programmatic_grades(
+        addon_case(), "x", searches_with(None), []
+    )
+
+
+def test_expected_spec_is_read_and_validated(tmp_path):
+    loaded = load_one(tmp_path, addon_entry(expected_spec="shadow-priest"))
+
+    assert loaded.expected_spec == "shadow-priest"
+    with pytest.raises(EvalCaseError, match="expected_spec"):
+        load_one(tmp_path, addon_entry(expected_spec="frost-mage"))
+
+
+def test_judge_system_prompt_names_every_covered_spec():
+    from prestie.catalog import COVERED_SPECS
+    from prestie.evaluation.agent_judge import Judge
+
+    judge = Judge(FakeJudgeClient(verdicts()))
+
+    for spec in COVERED_SPECS:
+        assert spec.name in judge._system

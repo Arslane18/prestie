@@ -16,6 +16,7 @@ from typing import Any
 import anthropic
 
 from prestie.agent.agent import Usage
+from prestie.catalog import COVERED_SPECS
 from prestie.evaluation.agent_cases import AgentCase
 
 DEFAULT_JUDGE_MODEL = "claude-sonnet-5"
@@ -94,8 +95,9 @@ JUDGE_CRITERIA: tuple[tuple[str, str], ...] = (
 )
 
 JUDGE_SYSTEM = """\
-You grade answers from a World of Warcraft assistant for Blood Death Knights. \
-The assistant must answer from passages retrieved from Icy Veins guides. You \
+You grade answers from a World of Warcraft assistant whose knowledge base \
+covers these specs: {covered_specs}. The assistant must answer from passages \
+retrieved from Icy Veins guides. You \
 receive the player context, the question, grading notes written by the \
 evaluation author (treat them as ground truth), the passages the assistant \
 retrieved, and its answer. In addon mode, the retrieved passages also include \
@@ -159,6 +161,7 @@ class Judge:
         self.model = model
         criteria = "\n".join(f"- {name}: {text}" for name, text in JUDGE_CRITERIA)
         self._system = JUDGE_SYSTEM.format(
+            covered_specs=", ".join(spec.name for spec in COVERED_SPECS),
             context_name=CONTEXT_CRITERION,
             context_definition=CONTEXT_DEFINITION,
             criteria=criteria,

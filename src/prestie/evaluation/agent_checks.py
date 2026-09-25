@@ -36,6 +36,7 @@ GATING_CHECKS = (
     "concise",
     "state_read",
     "quest_lookup",
+    "spec_filter",
 )
 
 
@@ -111,6 +112,7 @@ def programmatic_grades(
         ),
         "state_read": _state_read(case, tool_calls),
         "quest_lookup": _quest_lookup(case, tool_calls),
+        "spec_filter": _spec_filter(case, tool_calls),
     }
     return {name: float(ok) for name, ok in checks.items() if ok is not None}
 
@@ -137,6 +139,14 @@ def _quest_lookup(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | Non
         if call.name == QUEST_DETAILS_TOOL_NAME
     }
     return set(case.expected_quest_ids) <= looked_up
+
+
+def _spec_filter(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | None:
+    """Every search targets the expected spec (unfiltered searches mix specs)."""
+    searches = [call for call in tool_calls if call.name == SEARCH_TOOL_NAME]
+    if case.expected_spec is None or not searches:
+        return None
+    return all(call.input.get("spec") == case.expected_spec for call in searches)
 
 
 def _sources_cited(case: AgentCase, answer: str, cited: tuple[str, ...]) -> bool | None:

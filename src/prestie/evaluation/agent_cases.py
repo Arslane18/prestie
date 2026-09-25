@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from prestie.agent.prompts import PlayerContext
+from prestie.catalog import spec_by_key
 from prestie.character.state import (
     SAVED_VARIABLE,
     SUPPORTED_SCHEMA,
@@ -53,6 +54,8 @@ class AgentCase:
     character_age_minutes: int = DEFAULT_CHARACTER_AGE_MINUTES
     should_read_state: bool | None = None  # None: either is acceptable
     expected_quest_ids: tuple[int, ...] = ()
+    # Catalog key every search must filter on (e.g. "shadow-priest"), or None.
+    expected_spec: str | None = None
 
     def player(self) -> PlayerContext | None:
         """The manual-mode context; None in addon mode (the agent reads the state)."""
@@ -124,6 +127,7 @@ def _parse(entry: Any, where: str) -> AgentCase:
         must_include=_strings(entry, "must_include", where),
         judge_notes=str(entry.get("judge_notes", "")),
         detail_requested=bool(entry.get("detail_requested", False)),
+        expected_spec=_expected_spec(entry, where),
     )
     if "character" in entry:
         return _with_character(case, entry, where)
@@ -180,6 +184,13 @@ def _character(snapshot: Any, where: str) -> CharacterState | None:
         return character_state_from_saved_variables({SAVED_VARIABLE: data})
     except CharacterStateError as exc:
         raise EvalCaseError(f"{where}: invalid 'character': {exc}") from exc
+
+
+def _expected_spec(entry: dict[str, Any], where: str) -> str | None:
+    key = entry.get("expected_spec")
+    if key is not None and (not isinstance(key, str) or spec_by_key(key) is None):
+        raise EvalCaseError(f"{where}: 'expected_spec' {key!r} is not a covered spec")
+    return key
 
 
 def _strings(entry: dict[str, Any], key: str, where: str) -> tuple[str, ...]:
