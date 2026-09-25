@@ -19,7 +19,10 @@ from prestie.agent.character_tool import (
     format_state,
 )
 from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
+from prestie.agent.quest_tool import QUEST_DETAILS_TOOL_NAME, QuestDetailsTool
 from prestie.agent.tools import KnowledgeBaseTool
+from prestie.blizzard.client import GameDataClient, build_http_client
+from prestie.blizzard.quests import QuestCache, QuestRepository
 from prestie.character.state import CharacterStateError
 from prestie.character.watcher import SavedVariablesWatcher
 from prestie.config import ConfigError, Settings, load_settings
@@ -64,6 +67,7 @@ from prestie.knowledge.store import (
 
 DEFAULT_CACHE_DIR = Path("data/raw/icy-veins")
 DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
+DEFAULT_QUEST_CACHE_DIR = Path("data/blizzard/quests")
 SNIPPET_CHARS = 300
 EVAL_QUESTION_CHARS = 60
 EVAL_SECTION_CHARS = 55
@@ -128,12 +132,13 @@ def build_agent(
     """The single place the agent is wired, shared by `chat` and `eval-agent`.
 
     With a `player`, the context is written in the system prompt (manual mode).
-    Without one, the agent reads it from the addon export (addon mode).
+    Without one, the agent reads it from the addon export and looks quests up
+    in the Blizzard API (addon mode).
     """
     tools: list[Tool] = [KnowledgeBaseTool(retriever or open_retriever(settings))]
     if player is None:
         watcher = SavedVariablesWatcher(settings.require_saved_variables_path())
-        tools.append(CharacterStateTool(watcher))
+        tools.extend([CharacterStateTool(watcher), build_quest_tool(settings)])
     return Agent(
         client or build_anthropic_client(settings),
         model=settings.claude_model,
@@ -141,6 +146,17 @@ def build_agent(
         tools=tools,
         on_tool_call=on_tool_call,
     )
+
+
+def build_quest_tool(settings: Settings) -> QuestDetailsTool:
+    client_id, client_secret = settings.require_blizzard_credentials()
+    client = GameDataClient(
+        build_http_client(),
+        client_id,
+        client_secret,
+        region=settings.blizzard_region,
+    )
+    return QuestDetailsTool(QuestRepository(client, QuestCache(DEFAULT_QUEST_CACHE_DIR)))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -478,6 +494,8 @@ def _print_tool_call(call: ToolCall) -> None:
 def format_tool_call(call: ToolCall) -> str:
     if call.name == CHARACTER_STATE_TOOL_NAME:
         return "  [personnage] lecture de l'état exporté par l'addon"
+    if call.name == QUEST_DETAILS_TOOL_NAME:
+        return f"  [quête] détails de la quête {call.input.get('quest_id', '?')}"
     content_type = call.input.get("content_type")
     scope = f" [{content_type}]" if content_type else ""
     return f"  [recherche] {call.input.get('query', '?')}{scope}"

@@ -113,6 +113,10 @@ class Agent:
         self._max_tool_rounds = max_tool_rounds
         self._history: tuple[dict[str, Any], ...] = ()
 
+    @property
+    def tool_names(self) -> tuple[str, ...]:
+        return tuple(self._tools)
+
     def ask(self, question: str) -> AgentReply:
         """Run one turn. History is only updated when the turn completes cleanly."""
         turn_start = len(self._history)
