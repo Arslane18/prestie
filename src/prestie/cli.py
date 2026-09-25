@@ -11,6 +11,7 @@ from typing import Any
 
 import anthropic
 import chromadb
+import uvicorn
 
 from prestie.agent.agent import (
     Agent,
@@ -24,14 +25,15 @@ from prestie.agent.agent import (
     TurnFinished,
 )
 from prestie.agent.character_tool import (
-    CHARACTER_STATE_TOOL_NAME,
     CharacterStateTool,
     ProvidesCharacterState,
     format_state,
 )
 from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
-from prestie.agent.quest_tool import QUEST_DETAILS_TOOL_NAME, QuestDetailsTool
+from prestie.agent.quest_tool import QuestDetailsTool
+from prestie.agent.tool_labels import tool_call_label
 from prestie.agent.tools import KnowledgeBaseTool
+from prestie.api.app import create_app
 from prestie.blizzard.client import GameDataClient, build_http_client
 from prestie.blizzard.quests import QuestCache, QuestRepository
 from prestie.character.state import CharacterStateError
@@ -79,6 +81,8 @@ from prestie.knowledge.store import (
 DEFAULT_CACHE_DIR = Path("data/raw/icy-veins")
 DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
 DEFAULT_QUEST_CACHE_DIR = Path("data/blizzard/quests")
+DEFAULT_API_PORT = 8000
+LOCALHOST = "127.0.0.1"  # never 0.0.0.0: the API spends the player's API credits
 SNIPPET_CHARS = 300
 EVAL_QUESTION_CHARS = 60
 EVAL_SECTION_CHARS = 55
@@ -228,6 +232,12 @@ def _build_parser() -> argparse.ArgumentParser:
     chat.add_argument("-q", "--question", help="Ask one question and exit")
     chat.add_argument("--verbose", action="store_true", help="Show token usage")
     chat.set_defaults(handler=_chat)
+
+    serve = commands.add_parser(
+        "serve", help="Run the local API for the companion window (addon mode)"
+    )
+    serve.add_argument("--port", type=int, default=DEFAULT_API_PORT)
+    serve.set_defaults(handler=_serve)
 
     watch = commands.add_parser(
         "watch", help="Print the character state each time the addon export changes"
@@ -400,6 +410,28 @@ def _stream_reply(agent: Agent, question: str, *, verbose: bool) -> None:
             print(_format_footer(event.reply, verbose=verbose))
 
 
+def _serve(args: argparse.Namespace) -> int:
+    try:
+        settings = load_settings()
+        # Fail now rather than on the first question.
+        saved_variables = settings.require_saved_variables_path()
+        settings.require_blizzard_credentials()
+        retriever = open_retriever(settings)
+        client = build_anthropic_client(settings)
+    except KNOWLEDGE_ERRORS as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    app = create_app(
+        agent_factory=lambda: build_agent(
+            settings, None, _ignore_tool_call, retriever=retriever, client=client
+        ),
+        watcher_factory=lambda: SavedVariablesWatcher(saved_variables),
+    )
+    print(f"Prestie sur http://{LOCALHOST}:{args.port} (Ctrl+C pour arrêter)")
+    uvicorn.run(app, host=LOCALHOST, port=args.port)
+    return 0
+
+
 def _watch(args: argparse.Namespace) -> int:
     try:
         watcher = SavedVariablesWatcher(load_settings().require_saved_variables_path())
@@ -522,13 +554,7 @@ def _read_questions() -> Iterator[str]:
 
 
 def format_tool_call(call: ToolCall) -> str:
-    if call.name == CHARACTER_STATE_TOOL_NAME:
-        return "  [personnage] lecture de l'état exporté par l'addon"
-    if call.name == QUEST_DETAILS_TOOL_NAME:
-        return f"  [quête] détails de la quête {call.input.get('quest_id', '?')}"
-    content_type = call.input.get("content_type")
-    scope = f" [{content_type}]" if content_type else ""
-    return f"  [recherche] {call.input.get('query', '?')}{scope}"
+    return f"  {tool_call_label(call)}"
 
 
 def _format_footer(reply: AgentReply, *, verbose: bool) -> str:
