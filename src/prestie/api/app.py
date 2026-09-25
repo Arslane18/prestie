@@ -227,6 +227,8 @@ def character_json(state: CharacterState, now: datetime) -> dict[str, Any]:
         "captured_at": state.captured_at.isoformat(),
         "age_minutes": age_seconds // SECONDS_PER_MINUTE,
         "covered_by_knowledge_base": state.covered_by_knowledge_base,
+        "guide_spec": state.guide.key if state.guide else None,
+        "class_guides": [spec.key for spec in state.class_guides],
     }
 
 

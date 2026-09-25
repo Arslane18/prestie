@@ -53,7 +53,11 @@ function renderAge(c) {
     status.append(" · ", command, " en jeu");
   }
   if (!c.covered_by_knowledge_base) {
-    status.append(" · guides DK Sang uniquement");
+    status.append(
+      c.class_guides?.length
+        ? " · pas encore de spé : guides de montée de niveau"
+        : " · classe non couverte par les guides",
+    );
   }
 }
 
