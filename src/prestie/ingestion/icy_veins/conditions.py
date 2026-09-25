@@ -44,16 +44,21 @@ class ConditionLabels:
         # Presets are radio choices: "only A" already implies "not B".
         disabled = [] if enabled else [m[1] for m in rotation if m[2] == "off"]
 
+        presets = [key for key in enabled if not key.startswith(TALENT_KEY_PREFIX)]
+        talents = [key for key in enabled if key.startswith(TALENT_KEY_PREFIX)]
+
         labels = [
             *(_level_label(m) for c in classes if (m := LEVEL_CLASS.match(c))),
-            *(self._enabled_label(key) for key in enabled),
+            *([self._presets_label(presets)] if presets else []),
+            *(f"With {self.names.get(key, key)}" for key in talents),
             *(self._disabled_label(key) for key in disabled),
         ]
         return f"[{', '.join(labels)}]" if labels else None
 
-    def _enabled_label(self, key: str) -> str:
-        name = self.names.get(key, key)
-        return f"With {name}" if key.startswith(TALENT_KEY_PREFIX) else f"{name} only"
+    def _presets_label(self, keys: list[str]) -> str:
+        # Presets are radio choices: content tagged with several of them shows
+        # with any one of them ("A or B only"), never with all at once.
+        return f"{' or '.join(self.names.get(key, key) for key in keys)} only"
 
     def _disabled_label(self, key: str) -> str:
         name = self.names.get(key, key)
