@@ -96,11 +96,17 @@ def test_output_states_the_snapshot_age():
     assert 'age_minutes="12"' in content
 
 
+def test_output_gives_the_search_filter_of_a_covered_spec():
+    content = run(FakeSource()).content
+
+    assert 'Knowledge base: covered, search with spec="blood-death-knight"' in content
+
+
 def test_output_flags_characters_the_knowledge_base_does_not_cover():
     state = make_state(
-        class_name="Prêtresse",
-        class_token="PRIEST",
-        spec=None,
+        class_name="Mage",
+        class_token="MAGE",
+        spec=Spec(id=64, name="Givre", role="DAMAGER"),
         hero_talent=None,
         active_quest=None,
         quests=(),
@@ -108,11 +114,21 @@ def test_output_flags_characters_the_knowledge_base_does_not_cover():
 
     content = run(FakeSource(state)).content
 
-    assert "Specialization: none" in content
     assert "Hero talent: none" in content
     assert "Tracked quest: none" in content
     assert "not covered" in content
-    assert "Blood Death Knight" in content
+    assert "Shadow Priest" in content  # lists what is covered
+
+
+def test_output_points_a_character_without_spec_to_its_class_guides():
+    state = make_state(class_name="Prêtresse", class_token="PRIEST", spec=None)
+
+    content = run(FakeSource(state)).content
+
+    assert "Specialization: none" in content
+    assert "no specialization yet" in content
+    assert "discipline-priest, holy-priest, shadow-priest" in content
+    assert "leveling" in content
 
 
 def test_quest_log_is_capped():

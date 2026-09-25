@@ -68,3 +68,21 @@ def test_unknown_key_falls_back_to_raw_key():
 
 def test_element_without_condition_has_no_label():
     assert labels_from(ROTATION_SWITCHES).describe(element("some-style")) is None
+
+
+def test_several_enabled_presets_mean_either_of_them():
+    # Presets are radio choices: content tagged for two of them shows with
+    # either one, never "both at once".
+    labels = labels_from(ROTATION_SWITCHES)
+    either = element("rotation_line_preset-1_on rotation_line_preset-2_on")
+
+    assert labels.describe(either) == "[Deathbringer or San'layn only]"
+
+
+def test_presets_and_talents_combine():
+    labels = labels_from(ROTATION_SWITCHES)
+    both = element(
+        "rotation_line_preset-1_on rotation_line_preset-2_on rotation_line_talent-2_on"
+    )
+
+    assert labels.describe(both) == "[Deathbringer or San'layn only, With Consumption]"

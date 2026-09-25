@@ -52,7 +52,7 @@ def test_blood_death_knight_is_covered_by_the_knowledge_base():
     assert character_state_from_saved_variables(snapshot()).covered_by_knowledge_base
 
 
-def test_other_specs_are_not_covered():
+def test_priest_specs_are_covered():
     state = character_state_from_saved_variables(
         snapshot(
             **{
@@ -62,7 +62,32 @@ def test_other_specs_are_not_covered():
         )
     )
 
+    assert state.covered_by_knowledge_base
+    assert state.guide.key == "discipline-priest"
+
+
+def test_other_specs_are_not_covered():
+    state = character_state_from_saved_variables(
+        snapshot(
+            **{
+                "class": {"name": "Mage", "file": "MAGE"},
+                "spec": {"id": 64, "name": "Givre", "role": "DAMAGER"},
+            }
+        )
+    )
+
     assert not state.covered_by_knowledge_base
+    assert state.guide is None
+    assert state.class_guides == ()
+
+
+def test_a_character_without_spec_still_gets_its_class_guides():
+    state = character_state_from_saved_variables(
+        snapshot(**{"class": {"name": "Prêtresse", "file": "PRIEST"}, "spec": {"id": 0}})
+    )
+
+    assert not state.covered_by_knowledge_base
+    assert len(state.class_guides) == 3
 
 
 def test_spec_id_zero_means_no_specialization_yet():

@@ -222,7 +222,9 @@ def test_character_returns_the_state_with_its_age(agents):
     assert data["spec"] == {"id": 256, "name": "Discipline", "role": "HEALER"}
     assert data["age_minutes"] == 12
     assert data["captured_at"] == "2026-09-25T19:48:00+00:00"
-    assert data["covered_by_knowledge_base"] is False
+    assert data["covered_by_knowledge_base"] is True
+    assert data["guide_spec"] == "discipline-priest"
+    assert data["class_guides"] == ["discipline-priest", "holy-priest", "shadow-priest"]
 
 
 def test_character_error_uses_the_envelope(agents):

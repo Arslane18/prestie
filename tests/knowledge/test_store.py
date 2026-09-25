@@ -91,3 +91,26 @@ def test_mismatched_lengths_are_rejected(client):
 
 def test_search_on_empty_store_returns_nothing(client):
     assert KnowledgeStore.open(client, embedding_model=MODEL).search([1.0, 0.0]) == []
+
+
+def test_search_can_combine_metadata_filters(client):
+    # The search tool filters on class + spec (+ content type) with Chroma's $and.
+    store = KnowledgeStore.open(client, embedding_model=MODEL)
+    store.replace_page(
+        "page-a",
+        ids=["dk", "shadow", "disc"],
+        texts=["blood", "shadow", "disc"],
+        embeddings=[[1.0, 0.0], [0.9, 0.1], [0.8, 0.2]],
+        metadatas=[
+            {**meta("page-a"), "wow_class": "death-knight", "spec": "blood"},
+            {**meta("page-a"), "wow_class": "priest", "spec": "shadow"},
+            {**meta("page-a"), "wow_class": "priest", "spec": "discipline"},
+        ],
+    )
+
+    hits = store.search(
+        [1.0, 0.0],
+        where={"$and": [{"wow_class": "priest"}, {"spec": "shadow"}]},
+    )
+
+    assert [hit.id for hit in hits] == ["shadow"]

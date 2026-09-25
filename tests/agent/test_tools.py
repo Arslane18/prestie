@@ -1,5 +1,6 @@
 from prestie.agent.tools import SEARCH_TOOL, KnowledgeBaseTool
-from prestie.ingestion.icy_veins.pages import BLOOD_DK_PAGES
+from prestie.catalog import COVERED_SPECS
+from prestie.ingestion.icy_veins.pages import ALL_PAGES
 from prestie.knowledge.embeddings import EmbeddingError
 from prestie.knowledge.store import SearchHit
 
@@ -33,7 +34,7 @@ def test_tool_schema_exposes_every_content_type_as_enum():
 
     assert SEARCH_TOOL["name"] == "search_knowledge_base"
     assert set(properties["content_type"]["enum"]) == {
-        page.content_type for page in BLOOD_DK_PAGES
+        page.content_type for page in ALL_PAGES
     }
     assert SEARCH_TOOL["input_schema"]["required"] == ["query"]
 
@@ -78,6 +79,8 @@ def test_invalid_input_returns_an_error_result_instead_of_raising():
         {"query": 42},
         {"query": "x" * 1000},
         {"query": "ok", "content_type": "pvp"},
+        {"query": "ok", "spec": "frost-mage"},
+        {"query": "ok", "spec": 3},
     ):
         assert tool.run(bad_input).is_error, bad_input
 
@@ -96,7 +99,7 @@ def test_every_content_type_is_described_to_the_model():
         "description"
     ]
 
-    for content_type in {page.content_type for page in BLOOD_DK_PAGES}:
+    for content_type in {page.content_type for page in ALL_PAGES}:
         assert f"{content_type}:" in description
 
 
@@ -106,3 +109,37 @@ def test_content_type_filter_is_presented_as_a_second_attempt():
     ]
 
     assert "without" in description.lower()
+
+
+def test_tool_schema_exposes_every_covered_spec_as_enum():
+    spec = SEARCH_TOOL["input_schema"]["properties"]["spec"]
+
+    assert spec["enum"] == [guide.key for guide in COVERED_SPECS]
+    for guide in COVERED_SPECS:
+        assert guide.name in SEARCH_TOOL["description"]
+
+
+def test_spec_becomes_a_class_and_spec_filter():
+    retriever = FakeRetriever([make_hit("Rotation", "https://iv/rot")])
+
+    KnowledgeBaseTool(retriever).run({"query": "aoe", "spec": "shadow-priest"})
+
+    assert retriever.calls[0]["where"] == {
+        "$and": [{"wow_class": "priest"}, {"spec": "shadow"}]
+    }
+
+
+def test_spec_and_content_type_filters_combine():
+    retriever = FakeRetriever([make_hit("Rotation", "https://iv/rot")])
+
+    KnowledgeBaseTool(retriever).run(
+        {"query": "aoe", "spec": "blood-death-knight", "content_type": "rotation"}
+    )
+
+    assert retriever.calls[0]["where"] == {
+        "$and": [
+            {"wow_class": "death-knight"},
+            {"spec": "blood"},
+            {"content_type": "rotation"},
+        ]
+    }

@@ -82,7 +82,7 @@ def test_addon_mode_prompt_points_to_the_character_state_tool():
     assert "get_character_state" in prompt
     assert "Do not ask the player" in prompt
     assert "/reload" in prompt
-    assert "only cover Blood Death Knight" in prompt
+    assert "only cover the specs listed" in prompt
 
 
 def test_manual_mode_prompt_does_not_mention_the_character_state_tool():
@@ -112,3 +112,13 @@ def test_addon_mode_prompt_forbids_guessing_quest_locations():
 
     assert "do not infer where" in prompt
     assert "interface tips" in prompt
+
+
+def test_prompt_lists_every_covered_spec_with_its_search_filter():
+    from prestie.catalog import COVERED_SPECS
+
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    for spec in COVERED_SPECS:
+        assert f"{spec.name} (spec={spec.key})" in prompt
+    assert "Set the spec filter to the player's spec" in prompt

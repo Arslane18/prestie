@@ -6,7 +6,7 @@ import pytest
 
 from prestie import cli
 from prestie.ingestion.icy_veins.cache import CachedPage, HtmlCache
-from prestie.ingestion.icy_veins.pages import BLOOD_DK_PAGES
+from prestie.ingestion.icy_veins.pages import ALL_PAGES
 from tests.ingestion.icy_veins.html_fixtures import heading
 from tests.ingestion.icy_veins.html_fixtures import page as html_page
 
@@ -34,7 +34,7 @@ def test_scrape_caches_every_mvp_page(tmp_path, capsys):
 
     cache = HtmlCache(tmp_path)
     assert exit_code == 0
-    assert all(cache.get(page.slug) is not None for page in BLOOD_DK_PAGES)
+    assert all(cache.get(page.slug) is not None for page in ALL_PAGES)
     assert "downloaded" in capsys.readouterr().out
 
 
@@ -46,7 +46,17 @@ def test_second_scrape_is_served_from_cache(tmp_path, capsys):
 
     out = capsys.readouterr().out
     assert "downloaded" not in out
-    assert out.count("cached") == len(BLOOD_DK_PAGES)
+    assert out.count("cached") == len(ALL_PAGES)
+
+
+def test_scrape_can_target_one_spec(tmp_path, capsys):
+    exit_code = cli.main(["scrape", "--cache-dir", str(tmp_path), "--spec", "shadow-priest"])
+
+    cache = HtmlCache(tmp_path)
+    assert exit_code == 0
+    cached = [page.slug for page in ALL_PAGES if cache.get(page.slug) is not None]
+    assert len(cached) == 8
+    assert all(slug.startswith("shadow-priest-") for slug in cached)
 
 
 def test_scrape_reports_failure_with_non_zero_exit(tmp_path, monkeypatch, capsys):
@@ -72,7 +82,7 @@ class FakeEmbedder:
 def knowledge_env(tmp_path, monkeypatch):
     """Cache every MVP page with synthetic HTML and point the store at tmp_path."""
     cache = HtmlCache(tmp_path / "raw")
-    for page in BLOOD_DK_PAGES:
+    for page in ALL_PAGES:
         html = html_page(heading(2, "1.", "Stats", "stats") + f"<p>{page.slug}</p>")
         cache.put(CachedPage(page.slug, page.url, html, FETCHED_AT, 200))
     monkeypatch.setenv("PRESTIE_CHROMA_DIR", str(tmp_path / "chroma"))
@@ -86,8 +96,8 @@ def test_ingest_indexes_every_cached_page(knowledge_env, capsys):
 
     out = capsys.readouterr().out
     assert exit_code == 0
-    assert out.count("1 sections -> 1 chunks") == len(BLOOD_DK_PAGES)
-    assert f"{len(BLOOD_DK_PAGES)} chunks indexed" in out
+    assert out.count("1 sections -> 1 chunks") == len(ALL_PAGES)
+    assert f"{len(ALL_PAGES)} chunks indexed" in out
 
 
 def test_search_prints_ranked_hits_with_source(knowledge_env, capsys):
@@ -134,7 +144,7 @@ def test_eval_prints_per_question_ranks_and_summary(knowledge_env, tmp_path, cap
     capsys.readouterr()
 
     exit_code = cli.main(
-        ["eval", "--cases", str(cases), "-k", str(len(BLOOD_DK_PAGES))]
+        ["eval", "--cases", str(cases), "-k", str(len(ALL_PAGES))]
     )
 
     out = capsys.readouterr().out
@@ -567,3 +577,14 @@ def test_companion_window_is_skipped_without_powershell(monkeypatch):
     monkeypatch.setattr(cli.shutil, "which", lambda name: None)
 
     assert cli.launch_native_window(8123) is False
+
+
+def test_search_labels_show_the_spec_and_content_type_filters():
+    from prestie.agent.agent import ToolCall
+
+    call = ToolCall(
+        "search_knowledge_base",
+        {"query": "aoe", "spec": "shadow-priest", "content_type": "rotation"},
+    )
+
+    assert cli.format_tool_call(call) == "  [recherche] aoe [shadow-priest] [rotation]"
