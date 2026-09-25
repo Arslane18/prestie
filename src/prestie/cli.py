@@ -63,7 +63,8 @@ from prestie.evaluation.retrieval import (
     load_cases,
 )
 from prestie.ingestion.icy_veins.cache import HtmlCache
-from prestie.ingestion.icy_veins.pages import BLOOD_DK_PAGES
+from prestie.catalog import COVERED_SPECS, spec_by_key
+from prestie.ingestion.icy_veins.pages import ALL_PAGES, GuidePage, guide_pages
 from prestie.ingestion.icy_veins.parser import ParseError
 from prestie.ingestion.icy_veins.scraper import (
     IcyVeinsScraper,
@@ -201,6 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
     scrape.add_argument(
         "--force", action="store_true", help="Re-download pages already cached"
     )
+    _add_spec_argument(scrape)
     scrape.set_defaults(handler=_scrape)
 
     ingest = commands.add_parser(
@@ -210,6 +212,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ingest.add_argument(
         "--reset", action="store_true", help="Drop the index and rebuild it"
     )
+    _add_spec_argument(ingest)
     ingest.set_defaults(handler=_ingest)
 
     search = commands.add_parser(
@@ -274,6 +277,19 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_spec_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--spec",
+        choices=[spec.key for spec in COVERED_SPECS],
+        help="Only this spec's guide pages (default: every covered spec)",
+    )
+
+
+def _selected_pages(spec_key: str | None) -> tuple[GuidePage, ...]:
+    spec = spec_by_key(spec_key) if spec_key else None
+    return guide_pages(spec) if spec else ALL_PAGES
+
+
 def _variant_name(value: str) -> str:
     if value != BASELINE_VARIANT and not VARIANT_PATTERN.fullmatch(value):
         raise argparse.ArgumentTypeError(
@@ -291,7 +307,7 @@ def _scrape(args: argparse.Namespace) -> int:
                 robots=load_robots(client),
                 sleep=time.sleep,
             )
-            for page in BLOOD_DK_PAGES:
+            for page in _selected_pages(args.spec):
                 result = scraper.fetch(page, force=args.force)
                 status = "cached" if result.from_cache else "downloaded"
                 print(f"[{status:>10}] {page.slug}")
@@ -307,7 +323,7 @@ def _ingest(args: argparse.Namespace) -> int:
         embedder = build_embedder(settings)
         store = open_store(settings, reset=args.reset)
         reports = ingest_pages(
-            BLOOD_DK_PAGES, HtmlCache(args.cache_dir), embedder, store
+            _selected_pages(args.spec), HtmlCache(args.cache_dir), embedder, store
         )
     except KNOWLEDGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)

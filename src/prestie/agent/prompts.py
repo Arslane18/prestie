@@ -7,6 +7,8 @@ timestamp, a random id) would silently disable the cache.
 
 from dataclasses import dataclass
 
+from prestie.catalog import COVERED_SPECS
+
 MAX_PLAYER_LEVEL = 90  # Midnight level cap
 HERO_TALENTS = ("San'layn", "Deathbringer")
 # Answer budget, as displayed in the narrow companion window: a line longer
@@ -26,9 +28,10 @@ from the player's last /reload or logout: if the player says something that \
 contradicts it (another level, quest or spec), trust the player and mention \
 that a /reload in game refreshes the state. If the tool reports that the \
 character is not covered by the knowledge base, say that your guides only \
-cover Blood Death Knight and give no advice specific to the character's class \
-or spec: the rule on patch-dependent content applies, and your sources do not \
-cover it. If the tool fails, \
+cover the specs listed below and give no advice specific to the character's \
+class or spec: the rule on patch-dependent content applies, and your sources \
+do not cover it. A character with no specialization yet (below level 10) is \
+covered through its class's leveling guides. If the tool fails, \
 say that the character state is unavailable and answer without it. Any remark \
 about the state itself (its age, a contradiction, its absence) takes at most \
 half a line, inside the answer, and counts toward the line budget: drop a \
@@ -54,9 +57,11 @@ stats and strategy.
 </player>
 
 <knowledge_base>
-Your knowledge base contains Blood Death Knight guides copied from Icy Veins \
-(patch 12.1), stored in English. Use the search_knowledge_base tool to look \
-things up before answering any game question. Write search queries in English \
+Your knowledge base contains guides copied from Icy Veins (patch 12.1), \
+stored in English, for these specs: {specs}. Use the search_knowledge_base \
+tool to look things up before answering any game question. Set the spec filter \
+to the player's spec, unless the question is about another spec; without it, \
+passages from every spec compete. Write search queries in English \
 and use the English names of spells and talents, even when the player uses \
 French names (e.g. "Sang vampirique" -> "Vampiric Blood"). Search without a \
 content_type filter first; add one only in a follow-up search, when the first \
@@ -141,6 +146,7 @@ def build_system_prompt(player: PlayerContext | None) -> str:
     """Manual mode embeds `player`; addon mode (None) points to the state tool."""
     return SYSTEM_PROMPT_TEMPLATE.format(
         player=player.describe() if player else ADDON_PLAYER_SECTION,
+        specs=", ".join(f"{spec.name} (spec={spec.key})" for spec in COVERED_SPECS),
         max_lines=MAX_ANSWER_LINES,
         line_chars=MAX_LINE_CHARS,
     )

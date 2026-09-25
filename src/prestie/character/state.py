@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from prestie.catalog import SpecGuide, spec_by_id, specs_for_class
+
 SAVED_VARIABLE = "PrestieDB"
 SUPPORTED_SCHEMA = 1
 NO_SPEC_ID = 0  # reported below level 10, before a specialization is chosen
-BLOOD_SPEC_ID = 250  # the only spec the knowledge base covers
 
 
 class CharacterStateError(ValueError):
@@ -64,8 +65,18 @@ class CharacterState:
     captured_at: datetime
 
     @property
+    def guide(self) -> SpecGuide | None:
+        """The knowledge base's guides for this character's spec, if covered."""
+        return spec_by_id(self.spec.id) if self.spec else None
+
+    @property
+    def class_guides(self) -> tuple[SpecGuide, ...]:
+        """Every covered spec of the character's class (useful before level 10)."""
+        return specs_for_class(self.class_token)
+
+    @property
     def covered_by_knowledge_base(self) -> bool:
-        return self.spec is not None and self.spec.id == BLOOD_SPEC_ID
+        return self.guide is not None
 
 
 def character_state_from_saved_variables(

@@ -10,6 +10,6 @@ def tool_call_label(call: ToolCall) -> str:
         return "[personnage] lecture de l'état exporté par l'addon"
     if call.name == QUEST_DETAILS_TOOL_NAME:
         return f"[quête] détails de la quête {call.input.get('quest_id', '?')}"
-    content_type = call.input.get("content_type")
-    scope = f" [{content_type}]" if content_type else ""
+    filters = [call.input.get(key) for key in ("spec", "content_type")]
+    scope = "".join(f" [{value}]" for value in filters if value)
     return f"[recherche] {call.input.get('query', '?')}{scope}"

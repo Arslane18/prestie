@@ -12,20 +12,23 @@ from dataclasses import dataclass
 from html import escape
 from typing import Any, Protocol
 
-from prestie.ingestion.icy_veins.pages import BLOOD_DK_PAGES
+from prestie.catalog import COVERED_SPECS, spec_by_key
+from prestie.ingestion.icy_veins.pages import ALL_PAGES
 from prestie.knowledge.embeddings import EmbeddingError
 from prestie.knowledge.store import SearchHit
 
 SEARCH_TOOL_NAME = "search_knowledge_base"
 RESULTS_PER_SEARCH = 5
 MAX_QUERY_CHARS = 500
-CONTENT_TYPES = tuple(sorted({page.content_type for page in BLOOD_DK_PAGES}))
+CONTENT_TYPES = tuple(sorted({page.content_type for page in ALL_PAGES}))
+SPEC_KEYS = [spec.key for spec in COVERED_SPECS]
+COVERED_SPEC_NAMES = ", ".join(spec.name for spec in COVERED_SPECS)
 # What each guide page holds, so the model can pick a filter knowingly.
 # A page type missing here fails at import time, on purpose.
 CONTENT_TYPE_DESCRIPTIONS = {
     "beginner": "simplified 'easy mode' guide: basic rotation, beginner talents, "
     "basic stat priority",
-    "leveling": "leveling from 8 to 90: leveling rotation by level, heirlooms, "
+    "leveling": "leveling to 90: leveling rotation by level, heirlooms, "
     "leveling talents",
     "mechanics": "spell glossary: what every ability and talent does",
     "mythic_plus": "Mythic+ dungeons: group utility (interrupts, stuns), macros, "
@@ -51,12 +54,12 @@ CONTENT_TYPE_HELP = (
 SEARCH_TOOL: dict[str, Any] = {
     "name": SEARCH_TOOL_NAME,
     "description": (
-        "Semantic search over Blood Death Knight guides from Icy Veins (English, "
-        "patch 12.1). Returns the most relevant guide passages with their section "
-        "name and source URL. Use it for any question about rotation, talents, "
-        "stats, cooldowns, mechanics, leveling or Mythic+. Phrase the query in "
-        "English with English spell names. Call it several times with different "
-        "queries when a question covers several topics."
+        f"Semantic search over Icy Veins spec guides (English, patch 12.1) for: "
+        f"{COVERED_SPEC_NAMES}. Returns the most relevant guide passages with "
+        "their section name and source URL. Use it for any question about "
+        "rotation, talents, stats, cooldowns, mechanics, leveling or Mythic+. "
+        "Phrase the query in English with English spell names. Call it several "
+        "times with different queries when a question covers several topics."
     ),
     "input_schema": {
         "type": "object",
@@ -65,6 +68,14 @@ SEARCH_TOOL: dict[str, Any] = {
                 "type": "string",
                 "description": "What to look for, in English, e.g. 'secondary stat "
                 "priority San'layn' or 'when to use Vampiric Blood'.",
+            },
+            "spec": {
+                "type": "string",
+                "enum": SPEC_KEYS,
+                "description": "Only search this spec's guides. Set it to the "
+                "player's spec (from the player context or get_character_state) "
+                "unless the question is about another spec; without it, passages "
+                "from every spec compete.",
             },
             "content_type": {
                 "type": "string",
@@ -105,8 +116,7 @@ class KnowledgeBaseTool:
         if error:
             return ToolOutcome(error, is_error=True)
         query = tool_input["query"].strip()
-        content_type = tool_input.get("content_type")
-        where = {"content_type": content_type} if content_type else None
+        where = _where(tool_input.get("spec"), tool_input.get("content_type"))
         try:
             hits = self._retriever.search(query, n_results=self._n_results, where=where)
         except EmbeddingError as exc:
@@ -120,6 +130,9 @@ def _validate(tool_input: Mapping[str, Any]) -> str | None:
         return "Invalid input: 'query' must be a non-empty string."
     if len(query) > MAX_QUERY_CHARS:
         return f"Invalid input: 'query' must be at most {MAX_QUERY_CHARS} characters."
+    spec = tool_input.get("spec")
+    if spec is not None and spec not in SPEC_KEYS:
+        return f"Invalid input: unknown spec {spec!r}. Valid values: {', '.join(SPEC_KEYS)}."
     content_type = tool_input.get("content_type")
     if content_type is not None and content_type not in CONTENT_TYPES:
         return (
@@ -127,6 +140,18 @@ def _validate(tool_input: Mapping[str, Any]) -> str | None:
             f"Valid values: {', '.join(CONTENT_TYPES)}."
         )
     return None
+
+
+def _where(spec_key: str | None, content_type: str | None) -> dict[str, Any] | None:
+    """Chroma metadata filter; several conditions must be wrapped in $and."""
+    guide = spec_by_key(spec_key) if spec_key else None
+    conditions = [
+        *([{"wow_class": guide.wow_class}, {"spec": guide.spec}] if guide else []),
+        *([{"content_type": content_type}] if content_type else []),
+    ]
+    if not conditions:
+        return None
+    return conditions[0] if len(conditions) == 1 else {"$and": conditions}
 
 
 def format_results(query: str, hits: Sequence[SearchHit]) -> str:

@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from prestie.agent.tools import ToolOutcome
+from prestie.catalog import COVERED_SPECS
 from prestie.character.state import CharacterState, CharacterStateError, Quest
 
 CHARACTER_STATE_TOOL_NAME = "get_character_state"
@@ -83,9 +84,16 @@ def _spec(state: CharacterState) -> str:
 
 
 def _coverage(state: CharacterState) -> str:
-    if state.covered_by_knowledge_base:
-        return "covered (Blood Death Knight)"
-    return "not covered (the guides only cover Blood Death Knight)"
+    if state.guide is not None:
+        return f'covered, search with spec="{state.guide.key}"'
+    if state.spec is None and state.class_guides:
+        keys = ", ".join(spec.key for spec in state.class_guides)
+        return (
+            f"no specialization yet; guides for this class: {keys} "
+            "(their leveling guides cover low levels)"
+        )
+    covered = ", ".join(spec.name for spec in COVERED_SPECS)
+    return f"not covered (the guides cover: {covered})"
 
 
 def _tracked_quest(state: CharacterState) -> list[str]:
