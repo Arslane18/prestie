@@ -72,3 +72,38 @@ def test_missing_saved_variables_path_fails_only_when_needed():
 
     with pytest.raises(ConfigError, match="PRESTIE_SAVEDVARIABLES"):
         settings.require_saved_variables_path()
+
+
+def test_blizzard_credentials_and_region_are_read_from_environment():
+    settings = load_settings(
+        {
+            "BLIZZARD_CLIENT_ID": "id",
+            "BLIZZARD_CLIENT_SECRET": "shh",
+            "BLIZZARD_REGION": "us",
+        }
+    )
+
+    assert settings.require_blizzard_credentials() == ("id", "shh")
+    assert settings.blizzard_region == "us"
+
+
+def test_blizzard_region_defaults_to_europe():
+    assert load_settings({}).blizzard_region == "eu"
+
+
+def test_unknown_blizzard_region_is_rejected():
+    with pytest.raises(ConfigError, match="BLIZZARD_REGION"):
+        load_settings({"BLIZZARD_REGION": "mars"})
+
+
+def test_missing_blizzard_credentials_fail_only_when_needed():
+    settings = load_settings({"BLIZZARD_CLIENT_ID": "id"})
+
+    with pytest.raises(ConfigError, match="BLIZZARD_CLIENT_SECRET"):
+        settings.require_blizzard_credentials()
+
+
+def test_repr_never_leaks_the_blizzard_secret():
+    settings = load_settings({"BLIZZARD_CLIENT_SECRET": "shh-secret"})
+
+    assert "shh-secret" not in repr(settings)

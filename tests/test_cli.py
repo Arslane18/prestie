@@ -363,3 +363,59 @@ def test_watch_without_configured_path_fails_cleanly(monkeypatch, capsys):
 
     assert cli.main(["watch"]) == 1
     assert "PRESTIE_SAVEDVARIABLES" in capsys.readouterr().err
+
+
+def test_quest_tool_calls_are_announced():
+    from prestie.agent.agent import ToolCall
+
+    line = cli.format_tool_call(ToolCall("get_quest_details", {"quest_id": 55763}))
+
+    assert "55763" in line
+
+
+def test_addon_mode_agent_gets_search_character_and_quest_tools(tmp_path):
+    from prestie.config import load_settings
+
+    settings = load_settings(
+        {
+            "PRESTIE_SAVEDVARIABLES": str(tmp_path / "Prestie.lua"),
+            "BLIZZARD_CLIENT_ID": "id",
+            "BLIZZARD_CLIENT_SECRET": "secret",
+        }
+    )
+
+    agent = cli.build_agent(
+        settings, None, lambda call: None, retriever=object(), client=object()
+    )
+
+    assert agent.tool_names == (
+        "search_knowledge_base",
+        "get_character_state",
+        "get_quest_details",
+    )
+
+
+def test_manual_mode_agent_only_searches(tmp_path):
+    from prestie.agent.prompts import PlayerContext
+    from prestie.config import load_settings
+
+    agent = cli.build_agent(
+        load_settings({}),
+        PlayerContext(level=80),
+        lambda call: None,
+        retriever=object(),
+        client=object(),
+    )
+
+    assert agent.tool_names == ("search_knowledge_base",)
+
+
+def test_addon_mode_without_blizzard_credentials_fails_cleanly(tmp_path):
+    from prestie.config import ConfigError, load_settings
+
+    settings = load_settings({"PRESTIE_SAVEDVARIABLES": str(tmp_path / "P.lua")})
+
+    with pytest.raises(ConfigError, match="BLIZZARD_CLIENT_ID"):
+        cli.build_agent(
+            settings, None, lambda call: None, retriever=object(), client=object()
+        )

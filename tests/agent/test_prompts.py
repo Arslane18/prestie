@@ -88,3 +88,14 @@ def test_addon_mode_prompt_points_to_the_character_state_tool():
 def test_manual_mode_prompt_does_not_mention_the_character_state_tool():
     # The agent evaluation runs in manual mode: its prompt must not change.
     assert "get_character_state" not in build_system_prompt(PlayerContext(level=80))
+
+
+def test_addon_mode_prompt_explains_quest_details():
+    prompt = build_system_prompt(None)
+
+    assert "get_quest_details" in prompt
+    assert "walkthrough" in prompt
+
+
+def test_manual_mode_prompt_does_not_mention_quest_details():
+    assert "get_quest_details" not in build_system_prompt(PlayerContext(level=80))
