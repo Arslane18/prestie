@@ -504,3 +504,27 @@ def test_build_agent_uses_an_injected_character_source(tmp_path):
     )
 
     assert "get_character_state" in agent.tool_names
+
+
+def test_serve_starts_the_api_on_localhost_only(monkeypatch, tmp_path):
+    started = {}
+    monkeypatch.setenv("PRESTIE_SAVEDVARIABLES", str(tmp_path / "Prestie.lua"))
+    monkeypatch.setenv("BLIZZARD_CLIENT_ID", "id")
+    monkeypatch.setenv("BLIZZARD_CLIENT_SECRET", "secret")
+    monkeypatch.setattr(cli, "open_retriever", lambda settings: object())
+    monkeypatch.setattr(cli, "build_anthropic_client", lambda settings: object())
+    monkeypatch.setattr(
+        cli.uvicorn, "run", lambda app, **kwargs: started.update(app=app, **kwargs)
+    )
+
+    assert cli.main(["serve", "--port", "8123"]) == 0
+    assert started["host"] == "127.0.0.1"
+    assert started["port"] == 8123
+    assert any(route.path == "/api/chat" for route in started["app"].routes)
+
+
+def test_serve_fails_fast_without_addon_config(monkeypatch, capsys):
+    monkeypatch.setenv("PRESTIE_SAVEDVARIABLES", "")
+
+    assert cli.main(["serve"]) == 1
+    assert "PRESTIE_SAVEDVARIABLES" in capsys.readouterr().err
