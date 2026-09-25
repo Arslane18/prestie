@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from prestie.agent.agent import AgentError, AgentReply, Usage
+from prestie.agent.agent import AgentError, AgentReply, ToolCall, Usage
 from prestie.evaluation.agent_cases import AgentCase, load_agent_cases
 from prestie.evaluation.agent_checks import (
     answer_lines,
@@ -44,6 +44,10 @@ def case(**overrides) -> AgentCase:
         "detail_requested": False,
     }
     return AgentCase(**{**fields, **overrides})
+
+
+def searches(count: int) -> tuple[ToolCall, ...]:
+    return tuple(ToolCall("search_knowledge_base", {"query": "q"}) for _ in range(count))
 
 
 def passages(*urls: str) -> str:
@@ -107,7 +111,7 @@ def test_retrieved_urls_are_read_from_tool_outputs():
 
 
 def test_well_behaved_answer_passes_every_applicable_check():
-    grades = programmatic_grades(case(), ANSWER, 1, [passages(STAT_URL)])
+    grades = programmatic_grades(case(), ANSWER, searches(1), [passages(STAT_URL)])
 
     assert grades == {
         "search_ok": 1.0,
@@ -119,7 +123,7 @@ def test_well_behaved_answer_passes_every_applicable_check():
 
 
 def test_invented_citation_fails_citations_valid():
-    grades = programmatic_grades(case(), ANSWER, 1, [passages(f"{BASE}/other")])
+    grades = programmatic_grades(case(), ANSWER, searches(1), [passages(f"{BASE}/other")])
 
     assert grades["citations_valid"] == 0.0
     assert grades["retrieved"] == 0.0
@@ -128,18 +132,62 @@ def test_invented_citation_fails_citations_valid():
 def test_search_expectations_in_both_directions():
     small_talk = case(should_search=False, answerable=True, expected_sources=())
 
-    assert programmatic_grades(case(), "x", 0, [])["search_ok"] == 0.0
-    assert programmatic_grades(small_talk, "Merci !", 0, [])["search_ok"] == 1.0
-    assert programmatic_grades(small_talk, "Merci !", 1, [])["search_ok"] == 0.0
-    assert "search_ok" not in programmatic_grades(case(should_search=None), "x", 0, [])
+    assert programmatic_grades(case(), "x", searches(0), [])["search_ok"] == 0.0
+    assert programmatic_grades(small_talk, "Merci !", searches(0), [])["search_ok"] == 1.0
+    assert programmatic_grades(small_talk, "Merci !", searches(1), [])["search_ok"] == 0.0
+    assert "search_ok" not in programmatic_grades(case(should_search=None), "x", searches(0), [])
+
+
+def test_only_knowledge_base_searches_count_as_searches():
+    small_talk = case(should_search=False, answerable=True, expected_sources=())
+    state_read = (ToolCall("get_character_state", {}),)
+
+    assert programmatic_grades(small_talk, "Merci !", state_read, [])["search_ok"] == 1.0
+
+
+def addon_case(**overrides) -> AgentCase:
+    return case(
+        **{
+            "addon_mode": True,
+            "should_search": None,
+            "expected_sources": (),
+            **overrides,
+        }
+    )
+
+
+def test_state_read_expectations_in_both_directions():
+    state_read = (ToolCall("get_character_state", {}),)
+    must_read = addon_case(should_read_state=True)
+    must_not = addon_case(should_read_state=False)
+
+    assert programmatic_grades(must_read, "x", state_read, [])["state_read"] == 1.0
+    assert programmatic_grades(must_read, "x", (), [])["state_read"] == 0.0
+    assert programmatic_grades(must_not, "x", (), [])["state_read"] == 1.0
+    assert programmatic_grades(must_not, "x", state_read, [])["state_read"] == 0.0
+    assert "state_read" not in programmatic_grades(addon_case(), "x", (), [])
+
+
+def test_quest_lookup_requires_every_expected_quest():
+    quest_case = addon_case(expected_quest_ids=(55881, 55763))
+
+    def lookups(*ids):
+        return tuple(ToolCall("get_quest_details", {"quest_id": i}) for i in ids)
+
+    grades = programmatic_grades(quest_case, "x", lookups(55881, 55763), [])
+    partial = programmatic_grades(quest_case, "x", lookups(55881, 1), [])
+
+    assert grades["quest_lookup"] == 1.0
+    assert partial["quest_lookup"] == 0.0
+    assert "quest_lookup" not in programmatic_grades(addon_case(), "x", (), [])
 
 
 def test_sources_only_required_for_answerable_searched_cases():
     out_of_scope = case(answerable=False, expected_sources=())
 
-    assert programmatic_grades(case(), "no sources", 1, [])["sources_cited"] == 0.0
+    assert programmatic_grades(case(), "no sources", searches(1), [])["sources_cited"] == 0.0
     assert "sources_cited" not in programmatic_grades(
-        out_of_scope, "je ne sais pas", 1, []
+        out_of_scope, "je ne sais pas", searches(1), []
     )
 
 
@@ -147,10 +195,10 @@ def test_exact_copy_requires_every_expected_string():
     macro = case(must_include=("/cast [@focus] Mind Freeze",))
 
     assert (
-        programmatic_grades(macro, "/cast [@focus] Mind Freeze", 1, [])["exact_copy"]
+        programmatic_grades(macro, "/cast [@focus] Mind Freeze", searches(1), [])["exact_copy"]
         == 1.0
     )
-    assert programmatic_grades(macro, "/cast Mind Freeze", 1, [])["exact_copy"] == 0.0
+    assert programmatic_grades(macro, "/cast Mind Freeze", searches(1), [])["exact_copy"] == 0.0
 
 
 def test_answer_lines_ignore_sources_section_and_blank_lines():
@@ -168,14 +216,14 @@ def test_concise_passes_up_to_eight_lines_and_fails_beyond():
     eight = "\n".join(f"ligne {i}" for i in range(8))
     nine = "\n".join(f"ligne {i}" for i in range(9))
 
-    assert programmatic_grades(case(), eight, 1, [])["concise"] == 1.0
-    assert programmatic_grades(case(), nine, 1, [])["concise"] == 0.0
+    assert programmatic_grades(case(), eight, searches(1), [])["concise"] == 1.0
+    assert programmatic_grades(case(), nine, searches(1), [])["concise"] == 0.0
 
 
 def test_concise_does_not_apply_when_detail_is_requested():
     long_answer = "\n".join(f"ligne {i}" for i in range(30))
 
-    grades = programmatic_grades(case(detail_requested=True), long_answer, 1, [])
+    grades = programmatic_grades(case(detail_requested=True), long_answer, searches(1), [])
 
     assert "concise" not in grades
 
@@ -227,6 +275,7 @@ def verdicts(**overrides):
                 "fits_player",
                 "helpful",
                 "french",
+                "uses_state",
             )
         },
     }
@@ -390,6 +439,7 @@ def test_runner_writes_graded_rows_and_traces(tmp_path):
         "assistant",
     ]
     assert summary.pass_rate == 1.0
+    assert trace[3]["name"] == "search_knowledge_base"
 
 
 def test_invalid_context_is_diagnostic_and_does_not_fail_the_case(tmp_path):
@@ -486,3 +536,148 @@ def test_harness_gate_requires_approval_then_detects_changes(tmp_path):
     harness.write_text("v2")
     with pytest.raises(HarnessChangedError):
         check_harness(state, [harness], approve=False)
+
+
+# --- addon-mode cases ------------------------------------------------------------
+
+SNAPSHOT = {
+    "character": "Testeur",
+    "realm": "Hyjal",
+    "level": 90,
+    "class": {"name": "Chevalier de la mort", "file": "DEATHKNIGHT"},
+    "spec": {"id": 250, "name": "Sang", "role": "TANK"},
+    "heroTalent": "San'layn",
+    "quests": [{"id": 55881, "title": "Purge totémique", "level": 6}],
+}
+
+
+def addon_entry(**overrides):
+    entry = {
+        "id": "state-stats",
+        "question": "Quelle stat ?",
+        "character": SNAPSHOT,
+        "should_read_state": True,
+        "expected_quest_ids": [55881],
+    }
+    return {**entry, **overrides}
+
+
+def load_one(tmp_path, entry):
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps([entry]), encoding="utf-8")
+    return load_agent_cases(path)[0]
+
+
+def test_addon_case_carries_a_validated_character(tmp_path):
+    loaded = load_one(tmp_path, addon_entry())
+
+    assert loaded.addon_mode
+    assert loaded.player() is None
+    assert loaded.character.hero_talent == "San'layn"
+    assert loaded.should_read_state is True
+    assert loaded.expected_quest_ids == (55881,)
+    assert "get_character_state" in loaded.describe_player()
+
+
+def test_addon_case_state_is_fresh_at_run_time(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    loaded = load_one(tmp_path, addon_entry(character_age_minutes=30))
+    now = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
+
+    state = loaded.character_source(now).latest()
+
+    assert state.captured_at == now - timedelta(minutes=30)
+    assert state.level == 90
+
+
+def test_null_character_means_the_state_is_unavailable(tmp_path):
+    from datetime import UTC, datetime
+
+    from prestie.character.state import CharacterStateError
+
+    loaded = load_one(tmp_path, addon_entry(character=None))
+
+    assert loaded.addon_mode and loaded.character is None
+    assert "unavailable" in loaded.describe_player()
+    with pytest.raises(CharacterStateError):
+        loaded.character_source(datetime.now(UTC)).latest()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"player": {"level": 80}},  # both player and character
+        {"character": {"level": 90}},  # invalid snapshot
+        {"character_age_minutes": -1},
+        {"expected_quest_ids": ["55881"]},
+    ],
+)
+def test_malformed_addon_cases_are_rejected(tmp_path, overrides):
+    with pytest.raises(EvalCaseError):
+        load_one(tmp_path, addon_entry(**overrides))
+
+
+def test_state_fields_are_rejected_in_manual_cases(tmp_path):
+    entry = {
+        "id": "x",
+        "question": "q",
+        "player": {"level": 80},
+        "should_read_state": True,
+    }
+
+    with pytest.raises(EvalCaseError, match="character"):
+        load_one(tmp_path, entry)
+
+
+def test_shipped_addon_cases_are_valid():
+    cases = load_agent_cases(SHIPPED_CASES.with_name("agent_cases_addon.json"))
+
+    assert all(c.addon_mode for c in cases)
+    assert {c.should_read_state for c in cases} >= {True, False}
+    assert any(c.expected_quest_ids for c in cases)
+    assert any(c.character is None for c in cases)
+
+
+def test_judge_grades_use_of_the_character_state():
+    from prestie.evaluation.agent_judge import JUDGE_CRITERIA, build_judge_prompt
+
+    definition = dict(JUDGE_CRITERIA)["uses_state"]
+    prompt = build_judge_prompt(addon_case(), "answer", ["<character_state>"])
+
+    assert "does not ask" in definition
+    assert "Addon mode" in prompt
+    assert "<character_state>" in prompt
+
+
+def test_runner_grades_state_reads_in_addon_cases(tmp_path):
+    state_call = SimpleNamespace(
+        type="tool_use", id="s1", name="get_character_state", input={}
+    )
+    messages = (
+        {"role": "user", "content": "Quelle stat ?"},
+        {"role": "assistant", "content": [state_call]},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "s1", "content": "STATE"}
+            ],
+        },
+        {"role": "assistant", "content": [SimpleNamespace(type="text", text="ok")]},
+    )
+    outcome = AgentReply(text="ok", messages=messages, models=(MODEL,))
+
+    run(tmp_path, outcome, cases=[addon_case(should_read_state=True)])
+
+    [row] = rows(tmp_path)
+    assert row["grade"]["state_read"] == 1.0
+    assert row["tool_calls"] == 0  # searches only
+    assert row["meta"]["player"].startswith("Addon mode")
+    trace = json.loads(
+        (tmp_path / "baseline" / "traces" / "stats_rep0.json").read_text()
+    )
+    assert trace[3] == {
+        "role": "tool_result",
+        "name": "get_character_state",
+        "content": "STATE",
+    }

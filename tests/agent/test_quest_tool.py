@@ -62,7 +62,7 @@ def test_output_lists_facts_in_both_languages():
         "Level range: 1-10",
         "Classes: Prêtre",
         "1750 XP",
-        "4 g 10 s 20 c",
+        "4 gold 10 silver 20 copper",
         "Apprendre Résurrection",
         "choice of: Ceinturon",
         "Not included:",
@@ -124,3 +124,13 @@ def test_api_failures_are_error_results():
 
     assert outcome.is_error
     assert "rate limit" in outcome.content
+
+
+def test_duplicate_item_names_are_listed_once():
+    # The API lists one entry per spec group, often with the same item name.
+    girdle = Localized("Plate Girdle", "Ceinturon")
+    quest = make_quest(item_choices=(girdle, girdle, Localized("Sash", "Écharpe")))
+
+    content = QuestDetailsTool(FakeRepository(quest)).run({"quest_id": 1}).content
+
+    assert "choice of: Ceinturon / Écharpe" in content

@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import httpx
@@ -419,3 +420,76 @@ def test_addon_mode_without_blizzard_credentials_fails_cleanly(tmp_path):
         cli.build_agent(
             settings, None, lambda call: None, retriever=object(), client=object()
         )
+
+
+def test_eval_agent_serves_the_case_character_in_addon_mode(
+    agent_eval_env, monkeypatch, tmp_path, capsys
+):
+    from prestie.agent.agent import AgentReply
+
+    built = []
+
+    class EvalAgent:
+        def ask(self, question):
+            return AgentReply(text="ok", models=("claude-opus-5",))
+
+    def build(settings, player, on_tool_call, **kwargs):
+        built.append((player, kwargs.get("character_source")))
+        return EvalAgent()
+
+    monkeypatch.setattr(cli, "build_agent", build)
+    cases = tmp_path / "addon_cases.json"
+    cases.write_text(
+        json.dumps(
+            [
+                {
+                    "id": "state",
+                    "question": "q",
+                    "character": {
+                        "character": "T",
+                        "realm": "R",
+                        "level": 90,
+                        "class": {"name": "DK", "file": "DEATHKNIGHT"},
+                    },
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = cli.main(
+        [
+            "eval-agent",
+            "--cases",
+            str(cases),
+            "--flow-dir",
+            str(agent_eval_env),
+            "--reps",
+            "1",
+            "--approve-harness",
+        ]
+    )
+
+    assert exit_code == 0, capsys.readouterr().err
+    [(player, source)] = built
+    assert player is None
+    assert source.latest().level == 90
+
+
+def test_build_agent_uses_an_injected_character_source(tmp_path):
+    from prestie.config import load_settings
+
+    settings = load_settings(
+        {"BLIZZARD_CLIENT_ID": "id", "BLIZZARD_CLIENT_SECRET": "secret"}
+    )
+
+    agent = cli.build_agent(
+        settings,
+        None,
+        lambda call: None,
+        retriever=object(),
+        client=object(),
+        character_source=object(),
+    )
+
+    assert "get_character_state" in agent.tool_names
