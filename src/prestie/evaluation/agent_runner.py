@@ -20,12 +20,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from prestie.agent.agent import AgentError, AgentReply
+from prestie.agent.agent import AgentError, AgentReply, ToolCall
 from prestie.agent.prompts import build_system_prompt
 from prestie.evaluation.agent_cases import AgentCase
+from prestie.agent.tools import SEARCH_TOOL_NAME
 from prestie.evaluation.agent_checks import (
     GATING_CHECKS,
     answer_lines,
+    count_calls,
     programmatic_grades,
 )
 from prestie.evaluation.agent_judge import (
@@ -161,7 +163,7 @@ def _run_attempt(
         )
 
     tool_outputs = _tool_outputs(reply.messages)
-    search_count = _search_count(reply.messages)
+    tool_calls = _tool_calls(reply.messages)
     row: dict[str, Any] = {
         **base,
         "prompt": case.question,
@@ -170,9 +172,9 @@ def _run_attempt(
         "model": reply.models[-1] if reply.models else expected_model,
         "usage": usage,
         "latency_s": round(latency, 2),
-        "tool_calls": search_count,
+        "tool_calls": count_calls(tool_calls, SEARCH_TOOL_NAME),
         "answer_lines": answer_lines(reply.text),
-        "meta": {"player": case.player().describe(), "answer": reply.text},
+        "meta": {"player": case.describe_player(), "answer": reply.text},
     }
     trace = to_trace(case, reply)
     if reply.truncated:
@@ -189,7 +191,7 @@ def _run_attempt(
             trace=trace,
         )
 
-    scores = programmatic_grades(case, reply.text, search_count, tool_outputs)
+    scores = programmatic_grades(case, reply.text, tool_calls, tool_outputs)
     try:
         verdict = judge.grade(case, reply.text, tool_outputs)
     except JudgeError as exc:
@@ -224,6 +226,7 @@ def to_trace(case: AgentCase, reply: AgentReply) -> list[dict[str, Any]]:
     turns: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(case.player())}
     ]
+    tool_names = _tool_names_by_id(reply.messages)
     for message in reply.messages:
         content = message["content"]
         if message["role"] == "user":
@@ -233,7 +236,7 @@ def to_trace(case: AgentCase, reply: AgentReply) -> list[dict[str, Any]]:
                 turns.extend(
                     {
                         "role": "tool_result",
-                        "name": "search_knowledge_base",
+                        "name": tool_names.get(r["tool_use_id"], "?"),
                         "content": str(r["content"]),
                     }
                     for r in content
@@ -270,14 +273,22 @@ def _tool_outputs(messages: Sequence[Mapping[str, Any]]) -> list[str]:
     ]
 
 
-def _search_count(messages: Sequence[Mapping[str, Any]]) -> int:
-    return sum(
-        1
+def _tool_uses(messages: Sequence[Mapping[str, Any]]) -> list[Any]:
+    return [
+        block
         for message in messages
         if message["role"] == "assistant"
         for block in message["content"]
         if getattr(block, "type", None) == "tool_use"
-    )
+    ]
+
+
+def _tool_calls(messages: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
+    return tuple(ToolCall(block.name, block.input) for block in _tool_uses(messages))
+
+
+def _tool_names_by_id(messages: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+    return {block.id: block.name for block in _tool_uses(messages)}
 
 
 def _stop_reason(reply: AgentReply) -> str:

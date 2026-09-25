@@ -16,6 +16,7 @@ from prestie.agent.agent import Agent, AgentError, AgentReply, Tool, ToolCall
 from prestie.agent.character_tool import (
     CHARACTER_STATE_TOOL_NAME,
     CharacterStateTool,
+    ProvidesCharacterState,
     format_state,
 )
 from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
@@ -26,7 +27,7 @@ from prestie.blizzard.quests import QuestCache, QuestRepository
 from prestie.character.state import CharacterStateError
 from prestie.character.watcher import SavedVariablesWatcher
 from prestie.config import ConfigError, Settings, load_settings
-from prestie.evaluation import agent_checks, agent_judge, agent_runner
+from prestie.evaluation import agent_cases, agent_checks, agent_judge, agent_runner
 from prestie.evaluation.agent_cases import AgentCase, load_agent_cases
 from prestie.evaluation.agent_judge import DEFAULT_JUDGE_MODEL, Judge
 from prestie.evaluation.agent_runner import (
@@ -82,7 +83,8 @@ EVAL_REQUEST_TIMEOUT_S = 180.0
 EVAL_MAX_RETRIES = 4
 # Grading code covered by the harness-approval gate.
 HARNESS_PATHS = tuple(
-    Path(module.__file__) for module in (agent_checks, agent_judge, agent_runner)
+    Path(module.__file__)
+    for module in (agent_cases, agent_checks, agent_judge, agent_runner)
 )
 KNOWLEDGE_ERRORS = (
     ConfigError,
@@ -128,17 +130,21 @@ def build_agent(
     *,
     retriever: Retriever | None = None,
     client: anthropic.Anthropic | None = None,
+    character_source: ProvidesCharacterState | None = None,
 ) -> Agent:
     """The single place the agent is wired, shared by `chat` and `eval-agent`.
 
     With a `player`, the context is written in the system prompt (manual mode).
-    Without one, the agent reads it from the addon export and looks quests up
-    in the Blizzard API (addon mode).
+    Without one, the agent reads it from the addon export (or from
+    `character_source`, the evaluation's fixed state) and looks quests up in
+    the Blizzard API (addon mode).
     """
     tools: list[Tool] = [KnowledgeBaseTool(retriever or open_retriever(settings))]
     if player is None:
-        watcher = SavedVariablesWatcher(settings.require_saved_variables_path())
-        tools.extend([CharacterStateTool(watcher), build_quest_tool(settings)])
+        source = character_source or SavedVariablesWatcher(
+            settings.require_saved_variables_path()
+        )
+        tools.extend([CharacterStateTool(source), build_quest_tool(settings)])
     return Agent(
         client or build_anthropic_client(settings),
         model=settings.claude_model,
@@ -407,6 +413,11 @@ def _eval_agent(args: argparse.Namespace) -> int:
                 _ignore_tool_call,
                 retriever=retriever,
                 client=client,
+                character_source=(
+                    case.character_source(datetime.now(UTC))
+                    if case.addon_mode
+                    else None
+                ),
             ),
             judge=Judge(client, model=args.judge_model),
             variant_dir=args.flow_dir / args.variant,

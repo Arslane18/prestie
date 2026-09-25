@@ -115,7 +115,8 @@ def _level_range(quest: QuestDetails) -> list[str]:
 
 
 def _rewards(quest: QuestDetails) -> str:
-    items = " / ".join(_fr(item) for item in quest.item_choices)
+    # One entry per spec group in the API: the same name often comes twice.
+    items = " / ".join(dict.fromkeys(_fr(item) for item in quest.item_choices))
     parts = [
         *([f"{quest.experience} XP"] if quest.experience else []),
         *([_money(quest.money_copper)] if quest.money_copper else []),
@@ -128,7 +129,8 @@ def _rewards(quest: QuestDetails) -> str:
 def _money(total_copper: int) -> str:
     gold, rest = divmod(total_copper, COPPER_PER_GOLD)
     silver, copper = divmod(rest, COPPER_PER_SILVER)
-    amounts = ((gold, "g"), (silver, "s"), (copper, "c"))
+    # Full unit names: "s"/"c" read ambiguously next to French po/pa/pc.
+    amounts = ((gold, "gold"), (silver, "silver"), (copper, "copper"))
     return " ".join(f"{amount} {unit}" for amount, unit in amounts if amount)
 
 

@@ -6,10 +6,14 @@ when it does not apply to the case (reported as n/a, excluded from means).
 
 import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from html import unescape
 
+from prestie.agent.agent import ToolCall
+from prestie.agent.character_tool import CHARACTER_STATE_TOOL_NAME
 from prestie.agent.prompts import MAX_ANSWER_LINES, MAX_LINE_CHARS
+from prestie.agent.quest_tool import QUEST_DETAILS_TOOL_NAME
+from prestie.agent.tools import SEARCH_TOOL_NAME
 from prestie.evaluation.agent_cases import AgentCase
 
 SOURCES_HEADING = "sources (contenu copié d'icy veins)"
@@ -30,6 +34,8 @@ GATING_CHECKS = (
     "citations_valid",
     "exact_copy",
     "concise",
+    "state_read",
+    "quest_lookup",
 )
 
 
@@ -72,13 +78,20 @@ def source_key(url: str) -> str:
     return url.partition(WOW_PATH_MARKER)[2]
 
 
+def count_calls(tool_calls: Sequence[ToolCall], name: str) -> int:
+    return sum(1 for call in tool_calls if call.name == name)
+
+
 def programmatic_grades(
-    case: AgentCase, answer: str, search_count: int, tool_outputs: Iterable[str]
+    case: AgentCase,
+    answer: str,
+    tool_calls: Sequence[ToolCall],
+    tool_outputs: Iterable[str],
 ) -> dict[str, float]:
     retrieved = retrieved_urls(tool_outputs)
     cited = cited_urls(answer)
     checks: dict[str, bool | None] = {
-        "search_ok": _search_ok(case, search_count),
+        "search_ok": _search_ok(case, count_calls(tool_calls, SEARCH_TOOL_NAME)),
         "sources_cited": _sources_cited(case, answer, cited),
         "citations_valid": all(url in retrieved for url in cited) if cited else None,
         "concise": (
@@ -96,6 +109,8 @@ def programmatic_grades(
             if case.expected_sources
             else None
         ),
+        "state_read": _state_read(case, tool_calls),
+        "quest_lookup": _quest_lookup(case, tool_calls),
     }
     return {name: float(ok) for name, ok in checks.items() if ok is not None}
 
@@ -104,6 +119,24 @@ def _search_ok(case: AgentCase, search_count: int) -> bool | None:
     if case.should_search is None:
         return None
     return (search_count > 0) == case.should_search
+
+
+def _state_read(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | None:
+    if case.should_read_state is None:
+        return None
+    read = count_calls(tool_calls, CHARACTER_STATE_TOOL_NAME) > 0
+    return read == case.should_read_state
+
+
+def _quest_lookup(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | None:
+    if not case.expected_quest_ids:
+        return None
+    looked_up = {
+        call.input.get("quest_id")
+        for call in tool_calls
+        if call.name == QUEST_DETAILS_TOOL_NAME
+    }
+    return set(case.expected_quest_ids) <= looked_up
 
 
 def _sources_cited(case: AgentCase, answer: str, cited: tuple[str, ...]) -> bool | None:
