@@ -148,3 +148,22 @@ def test_judged_relevant_passages_count_as_hits_unless_disabled():
 
     assert evaluate([case], search, k=5).results[0].rank == 1
     assert evaluate([case], search, k=5, judged=False).results[0].rank is None
+
+
+def test_an_anchorless_passage_is_judged_alone_not_as_its_whole_page():
+    intro = SearchHit(
+        id="i",
+        text="intro",
+        metadata={"page_slug": "talents", "source_url": f"{BASE}/talents"},
+        distance=0.3,
+    )
+    case = RetrievalCase("build?", expected=(), judged_irrelevant=("talents#",))
+
+    # A bare "talents" key would mean "any passage of the page" and hide the
+    # page's other sections from later judging runs (or count them all as
+    # hits if the intro were relevant).
+    assert [p.key for p in pool_passages(CASE, [[intro]], depth=1)] == ["talents#"]
+    new_section = hit("7", "talents", "raid-build")
+    assert [p.key for p in pool_passages(case, [[intro, new_section]], 2)] == [
+        "talents#raid-build"
+    ]

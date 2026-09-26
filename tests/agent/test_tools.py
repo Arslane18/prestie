@@ -79,7 +79,7 @@ def test_invalid_input_returns_an_error_result_instead_of_raising():
         {"query": 42},
         {"query": "x" * 1000},
         {"query": "ok", "content_type": "pvp"},
-        {"query": "ok", "spec": "frost-mage"},
+        {"query": "ok", "spec": "frost-paladin"},
         {"query": "ok", "spec": 3},
     ):
         assert tool.run(bad_input).is_error, bad_input
@@ -115,8 +115,8 @@ def test_tool_schema_exposes_every_covered_spec_as_enum():
     spec = SEARCH_TOOL["input_schema"]["properties"]["spec"]
 
     assert spec["enum"] == [guide.key for guide in COVERED_SPECS]
-    for guide in COVERED_SPECS:
-        assert guide.name in SEARCH_TOOL["description"]
+    assert "every class and specialization" in SEARCH_TOOL["description"]
+    assert "Shadow Priest" not in SEARCH_TOOL["description"]
 
 
 def test_spec_becomes_a_class_and_spec_filter():

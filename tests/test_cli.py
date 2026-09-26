@@ -119,7 +119,7 @@ def test_search_can_filter_by_content_type(knowledge_env, capsys):
     cli.main(["search", "anything", "--content-type", "leveling"])
 
     out = capsys.readouterr().out
-    assert "blood-death-knight-leveling-guide" in out
+    assert "-leveling-guide" in out
     assert "stat-priority" not in out
 
 
@@ -651,3 +651,31 @@ def test_judge_retrieval_pools_every_system_and_records_verdicts(
     assert entry["judged_relevant"] == judged[0][:1]
     assert entry["judge_model"] == "claude-sonnet-5"
     assert "1 relevant" in capsys.readouterr().out
+
+
+def test_eval_can_rerank_the_candidates(knowledge_env, tmp_path, monkeypatch, capsys):
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps([{"question": "stats", "expected": ["fire-mage-leveling-guide"]}]),
+        encoding="utf-8",
+    )
+    built: list[str] = []
+
+    class ReverseReranker:
+        def rerank(self, query, hits, top_k):
+            return list(reversed(hits))[:top_k]
+
+    def fake_build(settings, model):
+        built.append(model)
+        return ReverseReranker()
+
+    monkeypatch.setattr(cli, "build_reranker", fake_build)
+    capsys.readouterr()
+
+    exit_code = cli.main(["eval", "--cases", str(cases), "--rerank", "rerank-2.5-lite"])
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert built == ["rerank-2.5-lite"]
+    assert "rerank-2.5-lite" in out

@@ -106,7 +106,8 @@ def test_output_flags_characters_the_knowledge_base_does_not_cover():
     state = make_state(
         class_name="Mage",
         class_token="MAGE",
-        spec=Spec(id=64, name="Givre", role="DAMAGER"),
+        # A spec the catalog does not know yet (e.g. added by a later patch).
+        spec=Spec(id=9999, name="Nouvelle", role="DAMAGER"),
         hero_talent=None,
         active_quest=None,
         quests=(),
@@ -117,7 +118,9 @@ def test_output_flags_characters_the_knowledge_base_does_not_cover():
     assert "Hero talent: none" in content
     assert "Tracked quest: none" in content
     assert "not covered" in content
-    assert "Shadow Priest" in content  # lists what is covered
+    # Points to the class's guides, not to all ~40 covered specs.
+    assert "arcane-mage, fire-mage, frost-mage" in content
+    assert "Shadow Priest" not in content and "shadow-priest" not in content
 
 
 def test_output_points_a_character_without_spec_to_its_class_guides():

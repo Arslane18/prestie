@@ -739,14 +739,12 @@ def test_expected_spec_is_read_and_validated(tmp_path):
 
     assert loaded.expected_spec == "shadow-priest"
     with pytest.raises(EvalCaseError, match="expected_spec"):
-        load_one(tmp_path, addon_entry(expected_spec="frost-mage"))
+        load_one(tmp_path, addon_entry(expected_spec="frost-paladin"))
 
 
-def test_judge_system_prompt_names_every_covered_spec():
-    from prestie.catalog import COVERED_SPECS
+def test_judge_system_prompt_says_every_spec_is_covered():
     from prestie.evaluation.agent_judge import Judge
 
     judge = Judge(FakeJudgeClient(verdicts()))
 
-    for spec in COVERED_SPECS:
-        assert spec.name in judge._system
+    assert "every class and specialization" in judge._system

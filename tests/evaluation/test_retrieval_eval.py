@@ -195,7 +195,7 @@ def test_case_spec_is_loaded_and_validated(tmp_path):
     assert load_cases(path)[0].spec == "holy-priest"
 
     path.write_text(
-        json.dumps([{"question": "q", "expected": [], "spec": "frost-mage"}]),
+        json.dumps([{"question": "q", "expected": [], "spec": "frost-paladin"}]),
         encoding="utf-8",
     )
     with pytest.raises(EvalCaseError, match="spec"):
