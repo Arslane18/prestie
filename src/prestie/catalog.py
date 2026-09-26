@@ -24,11 +24,59 @@ class SpecGuide:
         return f"{self.spec}-{self.wow_class}"
 
 
+# Every playable spec (Midnight), grouped by class. Ids and roles checked
+# against the Blizzard Game Data API (/data/wow/playable-specialization).
 COVERED_SPECS: tuple[SpecGuide, ...] = (
-    SpecGuide("death-knight", "DEATHKNIGHT", "blood", "tank", 250, "Blood Death Knight"),
+    SpecGuide(
+        "death-knight", "DEATHKNIGHT", "blood", "tank", 250, "Blood Death Knight"
+    ),
+    SpecGuide("death-knight", "DEATHKNIGHT", "frost", "dps", 251, "Frost Death Knight"),
+    SpecGuide(
+        "death-knight", "DEATHKNIGHT", "unholy", "dps", 252, "Unholy Death Knight"
+    ),
+    SpecGuide("demon-hunter", "DEMONHUNTER", "havoc", "dps", 577, "Havoc Demon Hunter"),
+    SpecGuide(
+        "demon-hunter", "DEMONHUNTER", "vengeance", "tank", 581, "Vengeance Demon Hunter"
+    ),
+    SpecGuide(
+        "demon-hunter", "DEMONHUNTER", "devourer", "dps", 1480, "Devourer Demon Hunter"
+    ),
+    SpecGuide("druid", "DRUID", "balance", "dps", 102, "Balance Druid"),
+    SpecGuide("druid", "DRUID", "feral", "dps", 103, "Feral Druid"),
+    SpecGuide("druid", "DRUID", "guardian", "tank", 104, "Guardian Druid"),
+    SpecGuide("druid", "DRUID", "restoration", "healing", 105, "Restoration Druid"),
+    SpecGuide("evoker", "EVOKER", "devastation", "dps", 1467, "Devastation Evoker"),
+    SpecGuide(
+        "evoker", "EVOKER", "preservation", "healing", 1468, "Preservation Evoker"
+    ),
+    SpecGuide("evoker", "EVOKER", "augmentation", "dps", 1473, "Augmentation Evoker"),
+    SpecGuide("hunter", "HUNTER", "beast-mastery", "dps", 253, "Beast Mastery Hunter"),
+    SpecGuide("hunter", "HUNTER", "marksmanship", "dps", 254, "Marksmanship Hunter"),
+    SpecGuide("hunter", "HUNTER", "survival", "dps", 255, "Survival Hunter"),
+    SpecGuide("mage", "MAGE", "arcane", "dps", 62, "Arcane Mage"),
+    SpecGuide("mage", "MAGE", "fire", "dps", 63, "Fire Mage"),
+    SpecGuide("mage", "MAGE", "frost", "dps", 64, "Frost Mage"),
+    SpecGuide("monk", "MONK", "brewmaster", "tank", 268, "Brewmaster Monk"),
+    SpecGuide("monk", "MONK", "windwalker", "dps", 269, "Windwalker Monk"),
+    SpecGuide("monk", "MONK", "mistweaver", "healing", 270, "Mistweaver Monk"),
+    SpecGuide("paladin", "PALADIN", "holy", "healing", 65, "Holy Paladin"),
+    SpecGuide("paladin", "PALADIN", "protection", "tank", 66, "Protection Paladin"),
+    SpecGuide("paladin", "PALADIN", "retribution", "dps", 70, "Retribution Paladin"),
     SpecGuide("priest", "PRIEST", "discipline", "healing", 256, "Discipline Priest"),
     SpecGuide("priest", "PRIEST", "holy", "healing", 257, "Holy Priest"),
     SpecGuide("priest", "PRIEST", "shadow", "dps", 258, "Shadow Priest"),
+    SpecGuide("rogue", "ROGUE", "assassination", "dps", 259, "Assassination Rogue"),
+    SpecGuide("rogue", "ROGUE", "outlaw", "dps", 260, "Outlaw Rogue"),
+    SpecGuide("rogue", "ROGUE", "subtlety", "dps", 261, "Subtlety Rogue"),
+    SpecGuide("shaman", "SHAMAN", "elemental", "dps", 262, "Elemental Shaman"),
+    SpecGuide("shaman", "SHAMAN", "enhancement", "dps", 263, "Enhancement Shaman"),
+    SpecGuide("shaman", "SHAMAN", "restoration", "healing", 264, "Restoration Shaman"),
+    SpecGuide("warlock", "WARLOCK", "affliction", "dps", 265, "Affliction Warlock"),
+    SpecGuide("warlock", "WARLOCK", "demonology", "dps", 266, "Demonology Warlock"),
+    SpecGuide("warlock", "WARLOCK", "destruction", "dps", 267, "Destruction Warlock"),
+    SpecGuide("warrior", "WARRIOR", "arms", "dps", 71, "Arms Warrior"),
+    SpecGuide("warrior", "WARRIOR", "fury", "dps", 72, "Fury Warrior"),
+    SpecGuide("warrior", "WARRIOR", "protection", "tank", 73, "Protection Warrior"),
 )
 
 _BY_ID = {spec.spec_id: spec for spec in COVERED_SPECS}

@@ -23,7 +23,6 @@ RESULTS_PER_SEARCH = 5
 MAX_QUERY_CHARS = 500
 CONTENT_TYPES = tuple(sorted({page.content_type for page in ALL_PAGES}))
 SPEC_KEYS = [spec.key for spec in COVERED_SPECS]
-COVERED_SPEC_NAMES = ", ".join(spec.name for spec in COVERED_SPECS)
 # What each guide page holds, so the model can pick a filter knowingly.
 # A page type missing here fails at import time, on purpose.
 CONTENT_TYPE_DESCRIPTIONS = {
@@ -55,8 +54,8 @@ CONTENT_TYPE_HELP = (
 SEARCH_TOOL: dict[str, Any] = {
     "name": SEARCH_TOOL_NAME,
     "description": (
-        f"Semantic search over Icy Veins spec guides (English, patch 12.1) for: "
-        f"{COVERED_SPEC_NAMES}. Returns the most relevant guide passages with "
+        "Semantic search over Icy Veins guides (English, patch 12.1) for every "
+        "class and specialization. Returns the most relevant guide passages with "
         "their section name and source URL. Use it for any question about "
         "rotation, talents, stats, cooldowns, mechanics, leveling or Mythic+. "
         "Phrase the query in English with English spell names. Call it several "

@@ -7,7 +7,6 @@ timestamp, a random id) would silently disable the cache.
 
 from dataclasses import dataclass
 
-from prestie.catalog import COVERED_SPECS
 
 MAX_PLAYER_LEVEL = 90  # Midnight level cap
 HERO_TALENTS = ("San'layn", "Deathbringer")
@@ -60,7 +59,7 @@ stats and strategy.
 
 <knowledge_base>
 Your knowledge base contains guides copied from Icy Veins (patch 12.1), \
-stored in English, for these specs: {specs}. Use the search_knowledge_base \
+stored in English, for every class and specialization. Use the search_knowledge_base \
 tool to look things up before answering any game question. Set the spec filter \
 to the player's spec, unless the question is about another spec; a question \
 about the class as a whole still uses the player's spec, since each spec's \
@@ -150,7 +149,6 @@ def build_system_prompt(player: PlayerContext | None) -> str:
     """Manual mode embeds `player`; addon mode (None) points to the state tool."""
     return SYSTEM_PROMPT_TEMPLATE.format(
         player=player.describe() if player else ADDON_PLAYER_SECTION,
-        specs=", ".join(f"{spec.name} (spec={spec.key})" for spec in COVERED_SPECS),
         max_lines=MAX_ANSWER_LINES,
         line_chars=MAX_LINE_CHARS,
     )

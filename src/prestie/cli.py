@@ -263,6 +263,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ignore the LLM-judged relevant passages (judge-retrieval)",
     )
+    evaluation.add_argument(
+        "--rerank",
+        metavar="MODEL",
+        help="Rerank the vector candidates with this Voyage model "
+        "(e.g. rerank-2.5, rerank-2.5-lite)",
+    )
     evaluation.set_defaults(handler=_eval)
 
     judge = commands.add_parser(
@@ -397,7 +403,11 @@ def _search(args: argparse.Namespace) -> int:
 def _eval(args: argparse.Namespace) -> int:
     try:
         cases = load_cases(args.cases)
-        retriever = open_retriever(load_settings())
+        settings = load_settings()
+        reranker = build_reranker(settings, args.rerank) if args.rerank else None
+        retriever = Retriever(
+            build_embedder(settings), open_store(settings), reranker=reranker
+        )
         report = evaluate(
             cases,
             retriever.search,
@@ -408,7 +418,7 @@ def _eval(args: argparse.Namespace) -> int:
     except KNOWLEDGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(_format_report(report, spec_filter=args.spec_filter))
+    print(_format_report(report, spec_filter=args.spec_filter, rerank=args.rerank))
     return 0
 
 
@@ -457,7 +467,9 @@ def _judge_retrieval(args: argparse.Namespace) -> int:
     return 0
 
 
-def _format_report(report: EvalReport, *, spec_filter: bool = False) -> str:
+def _format_report(
+    report: EvalReport, *, spec_filter: bool = False, rerank: str | None = None
+) -> str:
     lines = [f"{'rank':>4}  {'question':<{EVAL_QUESTION_CHARS}}  top result (distance)"]
     lines.extend(_format_case(result) for result in report.results)
     cutoffs = sorted({1, 3, report.k})
@@ -468,7 +480,8 @@ def _format_report(report: EvalReport, *, spec_filter: bool = False) -> str:
     )
     lines.append(
         f"spec_precision@{report.k} = {report.spec_precision(report.k):.2f} "
-        f"(spec filter {'on' if spec_filter else 'off'})"
+        f"(spec filter {'on' if spec_filter else 'off'}, "
+        f"rerank {rerank or 'off'})"
     )
     return "\n".join(lines)
 

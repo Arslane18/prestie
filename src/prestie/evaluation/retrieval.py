@@ -152,10 +152,13 @@ def _spec_share(result: CaseResult, at: int) -> float:
 
 
 def source_key(hit: SearchHit) -> str:
-    """'page_slug#anchor' (or 'page_slug' for anchor-less sections)."""
+    """'page_slug#anchor', or 'page_slug#' for an anchor-less section.
+
+    The '#' is kept even without anchor: a bare 'page_slug' label means "any
+    passage of the page", which a single passage's key must never mean.
+    """
     anchor = str(hit.metadata.get("source_url", "")).partition("#")[2]
-    slug = str(hit.metadata.get("page_slug", ""))
-    return f"{slug}#{anchor}" if anchor else slug
+    return f"{hit.metadata.get('page_slug', '')}#{anchor}"
 
 
 def matches(hit: SearchHit, expected: tuple[str, ...]) -> bool:
