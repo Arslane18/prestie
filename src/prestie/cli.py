@@ -640,17 +640,13 @@ def _eval_agent(args: argparse.Namespace) -> int:
         retriever = open_retriever(settings)
         summary = run_agent_eval(
             cases,
-            agent_factory=lambda case: build_agent(
+            agent_factory=lambda case, source: build_agent(
                 settings,
                 case.player(),
                 _ignore_tool_call,
                 retriever=retriever,
                 client=client,
-                character_source=(
-                    case.character_source(datetime.now(UTC))
-                    if case.addon_mode
-                    else None
-                ),
+                character_source=source,
             ),
             judge=Judge(client, model=args.judge_model),
             variant_dir=args.flow_dir / args.variant,

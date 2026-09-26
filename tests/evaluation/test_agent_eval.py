@@ -296,6 +296,7 @@ def verdicts(**overrides):
                 "helpful",
                 "french",
                 "uses_state",
+                "follows_conversation",
             )
         },
     }
@@ -403,7 +404,7 @@ class FakeJudge:
     def __init__(self):
         self.calls = 0
 
-    def grade(self, case, answer, tool_outputs):
+    def grade(self, case, answer, tool_outputs, prior_exchanges=()):
         self.calls += 1
         return JudgeVerdict(
             scores={"grounded": 1.0, "helpful": 1.0},
@@ -416,7 +417,7 @@ class FakeJudge:
 def run(tmp_path, outcome, cases=None, reps=1, judge=None):
     return run_agent_eval(
         cases or [case()],
-        agent_factory=lambda c: FakeAgent(outcome),
+        agent_factory=lambda c, source: FakeAgent(outcome),
         judge=judge or FakeJudge(),
         variant_dir=tmp_path / "baseline",
         reps=reps,
@@ -464,7 +465,7 @@ def test_runner_writes_graded_rows_and_traces(tmp_path):
 
 def test_invalid_context_is_diagnostic_and_does_not_fail_the_case(tmp_path):
     class InvalidContextJudge(FakeJudge):
-        def grade(self, case, answer, tool_outputs):
+        def grade(self, case, answer, tool_outputs, prior_exchanges=()):
             verdict = super().grade(case, answer, tool_outputs)
             return JudgeVerdict(
                 scores={**verdict.scores, "context_valid": 0.0},

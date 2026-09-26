@@ -262,7 +262,7 @@ def agent_eval_env(tmp_path, monkeypatch):
         def __init__(self, client, model):
             self.model = model
 
-        def grade(self, case, answer, tool_outputs):
+        def grade(self, case, answer, tool_outputs, prior_exchanges=()):
             return JudgeVerdict(
                 {"helpful": 1.0}, {"helpful": "ok"}, self.model, Usage()
             )

@@ -11,6 +11,12 @@ A case runs in one of two modes, like `prestie chat`:
   PrestieDB.snapshot) served by the get_character_state tool, or null when the
   export is unavailable. These cases can also expect the agent to read the
   state (`should_read_state`) and to look up quests (`expected_quest_ids`).
+
+A case can also be a conversation: `"turns": [{"question": ...}, ...]` instead
+of `"question"`. Every turn is asked to the same agent, so the graded last
+question sees the real history (earlier answers and tool results); the
+expectations apply to that last turn only. In addon mode, a turn may carry a
+`"character"`: the state served from that turn on, as after a /reload.
 """
 
 import json
@@ -34,6 +40,15 @@ from prestie.evaluation.retrieval import EvalCaseError
 DEFAULT_CHARACTER_AGE_MINUTES = 5
 ADDON_ONLY_KEYS = ("should_read_state", "expected_quest_ids", "character_age_minutes")
 UNAVAILABLE_STATE_MESSAGE = "Prestie.lua not found: install the addon, then /reload"
+TURN_KEYS = frozenset({"question", "character"})
+
+
+@dataclass(frozen=True)
+class Turn:
+    """An earlier question of a conversation, played before the graded one."""
+
+    question: str
+    character: CharacterState | None = None  # state served during this turn
 
 
 @dataclass(frozen=True)
@@ -56,6 +71,8 @@ class AgentCase:
     expected_quest_ids: tuple[int, ...] = ()
     # Catalog key every search must filter on (e.g. "shadow-priest"), or None.
     expected_spec: str | None = None
+    # Questions asked before `question`, oldest first (empty: a single question).
+    prior_turns: tuple[Turn, ...] = ()
 
     def player(self) -> PlayerContext | None:
         """The manual-mode context; None in addon mode (the agent reads the state)."""
@@ -74,22 +91,39 @@ class AgentCase:
             "get_character_state (see its output in the tool results)."
         )
 
-    def character_source(self, now: datetime) -> "FixedCharacterSource":
-        """Serves the case's character as if exported `character_age_minutes` ago."""
-        if self.character is None:
-            return FixedCharacterSource(None)
+    def character_source(self, now: datetime) -> "TurnCharacterSource":
+        """Serves each turn's character as if exported `character_age_minutes` ago."""
         captured_at = now - timedelta(minutes=self.character_age_minutes)
-        return FixedCharacterSource(replace(self.character, captured_at=captured_at))
+        states = (*(turn.character for turn in self.prior_turns), self.character)
+        return TurnCharacterSource(
+            tuple(
+                None if state is None else replace(state, captured_at=captured_at)
+                for state in states
+            )
+        )
 
 
-@dataclass(frozen=True)
-class FixedCharacterSource:
-    state: CharacterState | None
+class TurnCharacterSource:
+    """The evaluation's character state, one per turn of the conversation.
+
+    The runner selects the turn before asking its question; the state starts
+    on the first turn, so a single-question case needs no selection.
+    """
+
+    def __init__(self, states: tuple[CharacterState | None, ...]):
+        self._states = states
+        self._turn = 0
+
+    def select_turn(self, index: int) -> None:
+        if not 0 <= index < len(self._states):
+            raise IndexError(f"no turn {index} in a {len(self._states)}-turn case")
+        self._turn = index
 
     def latest(self) -> CharacterState:
-        if self.state is None:
+        state = self._states[self._turn]
+        if state is None:
             raise CharacterStateError(UNAVAILABLE_STATE_MESSAGE)
-        return self.state
+        return state
 
 
 def load_agent_cases(path: Path) -> tuple[AgentCase, ...]:
@@ -110,14 +144,13 @@ def load_agent_cases(path: Path) -> tuple[AgentCase, ...]:
 def _parse(entry: Any, where: str) -> AgentCase:
     if not isinstance(entry, dict):
         raise EvalCaseError(f"{where}: expected an object")
-    for key in ("id", "question"):
-        if not isinstance(entry.get(key), str) or not entry[key].strip():
-            raise EvalCaseError(f"{where}: '{key}' must be a non-empty string")
+    _require_text(entry, "id", where)
     if "player" in entry and "character" in entry:
         raise EvalCaseError(f"{where}: give either 'player' or 'character', not both")
+    turns = _turns(entry, where)
     case = AgentCase(
         id=entry["id"],
-        question=entry["question"],
+        question=turns[-1]["question"],
         level=None,
         hero_talent=None,
         tags=_strings(entry, "tags", where),
@@ -130,8 +163,53 @@ def _parse(entry: Any, where: str) -> AgentCase:
         expected_spec=_expected_spec(entry, where),
     )
     if "character" in entry:
-        return _with_character(case, entry, where)
-    return _with_player(case, entry, where)
+        return _with_turn_characters(_with_character(case, entry, where), turns, where)
+    if any("character" in turn for turn in turns):
+        raise EvalCaseError(f"{where}: a turn 'character' needs addon mode")
+    prior = tuple(Turn(turn["question"]) for turn in turns[:-1])
+    return replace(_with_player(case, entry, where), prior_turns=prior)
+
+
+def _turns(entry: dict[str, Any], where: str) -> list[dict[str, Any]]:
+    """The conversation as turn objects; a single `question` is a 1-turn case."""
+    if "turns" not in entry:
+        _require_text(entry, "question", where)
+        return [{"question": entry["question"]}]
+    if "question" in entry:
+        raise EvalCaseError(f"{where}: give either 'question' or 'turns', not both")
+    turns = entry["turns"]
+    if not isinstance(turns, list) or not turns:
+        raise EvalCaseError(f"{where}: 'turns' must be a non-empty list")
+    for index, turn in enumerate(turns):
+        turn_where = f"{where} turn #{index}"
+        if not isinstance(turn, dict):
+            raise EvalCaseError(f"{turn_where}: expected an object")
+        unknown = sorted(set(turn) - TURN_KEYS)
+        if unknown:
+            raise EvalCaseError(f"{turn_where}: unknown keys {', '.join(unknown)}")
+        _require_text(turn, "question", turn_where)
+    return turns
+
+
+def _with_turn_characters(
+    case: AgentCase, turns: list[dict[str, Any]], where: str
+) -> AgentCase:
+    """Each turn serves the case's character, or the last one a turn brought."""
+    state = case.character
+    states = []
+    for index, turn in enumerate(turns):
+        if "character" in turn:
+            state = _character(turn["character"], f"{where} turn #{index}")
+        states.append(state)
+    prior = tuple(
+        Turn(turn["question"], state) for turn, state in zip(turns[:-1], states)
+    )
+    return replace(case, character=states[-1], prior_turns=prior)
+
+
+def _require_text(entry: dict[str, Any], key: str, where: str) -> None:
+    if not isinstance(entry.get(key), str) or not entry[key].strip():
+        raise EvalCaseError(f"{where}: '{key}' must be a non-empty string")
 
 
 def _with_player(case: AgentCase, entry: dict[str, Any], where: str) -> AgentCase:

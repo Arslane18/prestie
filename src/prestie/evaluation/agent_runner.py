@@ -8,6 +8,10 @@ the results in the layout the eval report builder reads:
 
 Rows are written as attempts finish, and (case, rep) pairs already present in
 results.jsonl are skipped, so a crashed or interrupted run can simply resume.
+
+A multi-turn case asks every question to the same agent and grades the last
+answer: tool calls are checked on that turn, but passages retrieved in earlier
+turns count as sources (they are still in the agent's context).
 """
 
 import hashlib
@@ -17,12 +21,13 @@ import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
-from prestie.agent.agent import AgentError, AgentReply, ToolCall
+from prestie.agent.agent import AgentError, AgentReply, ToolCall, Usage
 from prestie.agent.prompts import build_system_prompt
-from prestie.evaluation.agent_cases import AgentCase
+from prestie.evaluation.agent_cases import AgentCase, TurnCharacterSource
 from prestie.agent.tools import SEARCH_TOOL_NAME
 from prestie.evaluation.agent_checks import (
     GATING_CHECKS,
@@ -33,6 +38,7 @@ from prestie.evaluation.agent_checks import (
 from prestie.evaluation.agent_judge import (
     CONTEXT_METRIC,
     JUDGE_CRITERIA,
+    Exchange,
     JudgeError,
     JudgeVerdict,
 )
@@ -62,8 +68,16 @@ class AsksQuestions(Protocol):
 
 class GradesAnswers(Protocol):
     def grade(
-        self, case: AgentCase, answer: str, tool_outputs: Sequence[str]
+        self,
+        case: AgentCase,
+        answer: str,
+        tool_outputs: Sequence[str],
+        prior_exchanges: Sequence[Exchange] = (),
     ) -> JudgeVerdict: ...
+
+
+# Builds the agent for one attempt; the source is None in manual mode.
+AgentFactory = Callable[[AgentCase, TurnCharacterSource | None], AsksQuestions]
 
 
 @dataclass(frozen=True)
@@ -77,6 +91,16 @@ class RunSummary:
 
 
 @dataclass(frozen=True)
+class _Conversation:
+    replies: tuple[AgentReply, ...]
+    latencies: tuple[float, ...]
+
+
+class _SetupTurnFailed(Exception):
+    """An earlier turn was refused or truncated: the graded turn is meaningless."""
+
+
+@dataclass(frozen=True)
 class _Outcome:
     row: dict[str, Any] | None = None
     trace: list[dict[str, Any]] | None = None
@@ -86,13 +110,14 @@ class _Outcome:
 def run_agent_eval(
     cases: Iterable[AgentCase],
     *,
-    agent_factory: Callable[[AgentCase], AsksQuestions],
+    agent_factory: AgentFactory,
     judge: GradesAnswers,
     variant_dir: Path,
     reps: int,
     workers: int,
     expected_model: str,
     clock: Callable[[], float] = time.monotonic,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> RunSummary:
     (variant_dir / TRACES_DIR).mkdir(parents=True, exist_ok=True)
     results_path = variant_dir / RESULTS_FILE
@@ -103,7 +128,7 @@ def run_agent_eval(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
             pool.submit(
-                _run_attempt, c, rep, agent_factory, judge, expected_model, clock
+                _run_attempt, c, rep, agent_factory, judge, expected_model, clock, now
             )
             for c, rep in todo
         ]
@@ -129,17 +154,20 @@ def run_agent_eval(
 def _run_attempt(
     case: AgentCase,
     rep: int,
-    agent_factory: Callable[[AgentCase], AsksQuestions],
+    agent_factory: AgentFactory,
     judge: GradesAnswers,
     expected_model: str,
     clock: Callable[[], float],
+    now: Callable[[], datetime],
 ) -> _Outcome:
     """Never raises: every failure becomes an error record with a failure class."""
     base = {"prompt_id": case.id, "rep": rep}
     try:
-        start = clock()
-        reply = agent_factory(case).ask(case.question)
-        latency = clock() - start
+        conversation = _play(case, agent_factory, clock, now)
+    except _SetupTurnFailed as exc:
+        return _Outcome(
+            error={**base, "failure_class": "setup_turn_failed", "message": str(exc)}
+        )
     except AgentError as exc:
         return _Outcome(
             error={**base, "failure_class": "serving_error", "message": str(exc)}
@@ -149,8 +177,11 @@ def _run_attempt(
             error={**base, "failure_class": "harness_error", "message": repr(exc)}
         )
 
-    usage = asdict(reply.usage)
-    unexpected = [m for m in reply.models if not _same_model(m, expected_model)]
+    replies = conversation.replies
+    reply = replies[-1]
+    usage = asdict(sum((r.usage for r in replies), Usage()))
+    served = [m for r in replies for m in r.models]
+    unexpected = [m for m in served if not _same_model(m, expected_model)]
     if unexpected:
         return _Outcome(
             error={
@@ -162,8 +193,9 @@ def _run_attempt(
             }
         )
 
-    tool_outputs = _tool_outputs(reply.messages)
+    tool_outputs = _tool_outputs([m for r in replies for m in r.messages])
     tool_calls = _tool_calls(reply.messages)
+    exchanges = [Exchange(q, r.text) for q, r in zip(_questions(case), replies[:-1])]
     row: dict[str, Any] = {
         **base,
         "prompt": case.question,
@@ -171,12 +203,17 @@ def _run_attempt(
         "stop_reason": _stop_reason(reply),
         "model": reply.models[-1] if reply.models else expected_model,
         "usage": usage,
-        "latency_s": round(latency, 2),
+        "latency_s": round(conversation.latencies[-1], 2),
         "tool_calls": count_calls(tool_calls, SEARCH_TOOL_NAME),
         "answer_lines": answer_lines(reply.text),
-        "meta": {"player": case.describe_player(), "answer": reply.text},
+        "turns": _turn_records(case, conversation),
+        "meta": {
+            "player": case.describe_player(),
+            "answer": reply.text,
+            "conversation": [asdict(e) for e in exchanges],
+        },
     }
-    trace = to_trace(case, reply)
+    trace = to_trace(case, replies)
     if reply.truncated:
         return _Outcome(row={**row, "status": "truncated", "grade": {}}, trace=trace)
     if reply.refused:
@@ -193,7 +230,7 @@ def _run_attempt(
 
     scores = programmatic_grades(case, reply.text, tool_calls, tool_outputs)
     try:
-        verdict = judge.grade(case, reply.text, tool_outputs)
+        verdict = judge.grade(case, reply.text, tool_outputs, exchanges)
     except JudgeError as exc:
         return _Outcome(
             error={
@@ -218,16 +255,62 @@ def _run_attempt(
     )
 
 
+def _play(
+    case: AgentCase,
+    agent_factory: AgentFactory,
+    clock: Callable[[], float],
+    now: Callable[[], datetime],
+) -> _Conversation:
+    """Ask every question of the case to one agent, switching the state per turn."""
+    source = case.character_source(now()) if case.addon_mode else None
+    agent = agent_factory(case, source)
+    questions = _questions(case)
+    replies: list[AgentReply] = []
+    latencies: list[float] = []
+    for index, question in enumerate(questions):
+        if source is not None:
+            source.select_turn(index)
+        start = clock()
+        reply = agent.ask(question)
+        latencies.append(clock() - start)
+        replies.append(reply)
+        is_setup = index < len(questions) - 1
+        if is_setup and (reply.refused or reply.truncated):
+            reason = "refused" if reply.refused else "truncated"
+            raise _SetupTurnFailed(f"turn {index} ({question!r}) was {reason}")
+    return _Conversation(tuple(replies), tuple(latencies))
+
+
+def _questions(case: AgentCase) -> tuple[str, ...]:
+    return (*(turn.question for turn in case.prior_turns), case.question)
+
+
+def _turn_records(case: AgentCase, conversation: _Conversation) -> list[dict[str, Any]]:
+    """Per-turn usage and latency: how the cost grows along the conversation."""
+    return [
+        {
+            "question": question,
+            "usage": asdict(reply.usage),
+            "latency_s": round(latency, 2),
+            "tool_calls": len(_tool_uses(reply.messages)),
+        }
+        for question, reply, latency in zip(
+            _questions(case), conversation.replies, conversation.latencies
+        )
+    ]
+
+
 # --- transcript ----------------------------------------------------------------
 
 
-def to_trace(case: AgentCase, reply: AgentReply) -> list[dict[str, Any]]:
-    """Convert the API messages of one turn into the report's Turn[] format."""
+def to_trace(case: AgentCase, replies: Sequence[AgentReply]) -> list[dict[str, Any]]:
+    """Convert the API messages of every turn into the report's Turn[] format."""
     turns: list[dict[str, Any]] = [
         {"role": "system", "content": build_system_prompt(case.player())}
     ]
-    tool_names = _tool_names_by_id(reply.messages)
-    for message in reply.messages:
+    messages = [message for reply in replies for message in reply.messages]
+    tool_names = _tool_names_by_id(messages)
+    for message in messages:
         content = message["content"]
         if message["role"] == "user":
             if isinstance(content, str):
