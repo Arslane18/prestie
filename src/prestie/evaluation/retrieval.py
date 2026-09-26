@@ -17,6 +17,11 @@ And over cases tagged with a spec:
 
 With `spec_filter=True`, each case's spec is passed as a metadata filter, the
 way the agent searches; without it, every spec competes.
+
+Relevant sources come from hand labels (`expected`) plus, unless
+`judged=False`, the passages an LLM judge found to answer the question
+(`judged_relevant`, see relevance.py). Hand labels alone miss valid passages,
+which unfairly penalizes systems that find different good ones.
 """
 
 import json
@@ -43,10 +48,15 @@ class RetrievalCase:
     expected: tuple[str, ...]
     note: str = ""
     spec: str | None = None  # catalog key of the spec the question is about
+    judged_relevant: tuple[str, ...] = ()  # LLM judge: these passages answer
+    judged_irrelevant: tuple[str, ...] = ()  # LLM judge: these do not
 
     @property
     def answerable(self) -> bool:
         return bool(self.expected)
+
+    def relevant(self, *, judged: bool = True) -> tuple[str, ...]:
+        return (*self.expected, *self.judged_relevant) if judged else self.expected
 
 
 @dataclass(frozen=True)
@@ -104,20 +114,24 @@ def evaluate(
     k: int,
     *,
     spec_filter: bool = False,
+    judged: bool = True,
 ) -> EvalReport:
     return EvalReport(
         k=k,
-        results=tuple(_evaluate_case(c, search, k, spec_filter) for c in cases),
+        results=tuple(
+            _evaluate_case(c, search, k, spec_filter, judged) for c in cases
+        ),
     )
 
 
 def _evaluate_case(
-    case: RetrievalCase, search: SearchFn, k: int, spec_filter: bool
+    case: RetrievalCase, search: SearchFn, k: int, spec_filter: bool, judged: bool
 ) -> CaseResult:
     where = metadata_filter(case.spec) if spec_filter else None
     hits = tuple(search(case.question, k, where))
+    relevant = case.relevant(judged=judged)
     rank = next(
-        (i for i, hit in enumerate(hits, start=1) if _matches(hit, case.expected)),
+        (i for i, hit in enumerate(hits, start=1) if matches(hit, relevant)),
         None,
     )
     return CaseResult(case=case, rank=rank, hits=hits)
@@ -144,7 +158,7 @@ def source_key(hit: SearchHit) -> str:
     return f"{slug}#{anchor}" if anchor else slug
 
 
-def _matches(hit: SearchHit, expected: tuple[str, ...]) -> bool:
+def matches(hit: SearchHit, expected: tuple[str, ...]) -> bool:
     key = source_key(hit)
     return key in expected or key.partition("#")[0] in expected
 
@@ -172,9 +186,18 @@ def _parse_case(entry: Any, index: int, path: Path) -> RetrievalCase:
     spec = entry.get("spec")
     if spec is not None and (not isinstance(spec, str) or spec_by_key(spec) is None):
         raise EvalCaseError(f"{where}: 'spec' {spec!r} is not a covered spec")
+    judged = {
+        key: entry.get(key, [])
+        for key in ("judged_relevant", "judged_irrelevant")
+    }
+    for key, value in judged.items():
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise EvalCaseError(f"{where}: '{key}' must be a list of strings")
     return RetrievalCase(
         question=question,
         expected=tuple(expected),
         note=str(entry.get("note", "")),
         spec=spec,
+        judged_relevant=tuple(judged["judged_relevant"]),
+        judged_irrelevant=tuple(judged["judged_irrelevant"]),
     )

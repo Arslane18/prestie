@@ -612,3 +612,42 @@ def test_eval_reports_spec_precision_and_can_filter_by_spec(knowledge_env, tmp_p
     out = capsys.readouterr().out
     assert "spec_precision@5 = 1.00" in out
     assert "spec filter on" in out
+
+
+def test_judge_retrieval_pools_every_system_and_records_verdicts(
+    knowledge_env, tmp_path, monkeypatch, capsys
+):
+    from prestie.evaluation.relevance import Judgment
+
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps([{"question": "stats", "expected": [], "spec": "shadow-priest"}]),
+        encoding="utf-8",
+    )
+    judged = []
+
+    class FakeJudge:
+        model = "claude-sonnet-5"
+
+        def __init__(self, client, model):
+            pass
+
+        def judge(self, case, passages):
+            judged.append([p.key for p in passages])
+            return tuple(Judgment(p.key, "answers", "ok") for p in passages[:1]) + tuple(
+                Judgment(p.key, "irrelevant", "no") for p in passages[1:]
+            )
+
+    monkeypatch.setattr(cli, "RelevanceJudge", FakeJudge)
+    monkeypatch.setattr(cli, "build_eval_client", lambda settings: object())
+    monkeypatch.setattr(cli, "build_reranker", lambda settings, model: None)
+    capsys.readouterr()
+
+    assert cli.main(["judge-retrieval", "--cases", str(cases), "--depth", "2"]) == 0
+
+    entry = json.loads(cases.read_text(encoding="utf-8"))[0]
+    assert len(judged) == 1 and judged[0]
+    assert entry["judged_relevant"] == judged[0][:1]
+    assert entry["judge_model"] == "claude-sonnet-5"
+    assert "1 relevant" in capsys.readouterr().out

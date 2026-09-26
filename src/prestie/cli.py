@@ -45,6 +45,12 @@ from prestie.config import ConfigError, Settings, load_settings
 from prestie.evaluation import agent_cases, agent_checks, agent_judge, agent_runner
 from prestie.evaluation.agent_cases import AgentCase, load_agent_cases
 from prestie.evaluation.agent_judge import DEFAULT_JUDGE_MODEL, Judge
+from prestie.evaluation.relevance import (
+    RelevanceJudge,
+    RelevanceJudgeError,
+    pool_passages,
+    record_judgments,
+)
 from prestie.evaluation.agent_runner import (
     RESULTS_FILE,
     HarnessChangedError,
@@ -74,6 +80,8 @@ from prestie.ingestion.icy_veins.scraper import (
 )
 from prestie.ingestion.pipeline import IngestError, ingest_pages
 from prestie.knowledge.embeddings import Embedder, EmbeddingError, VoyageEmbedder
+from prestie.knowledge.filters import metadata_filter
+from prestie.knowledge.reranker import VoyageReranker
 from prestie.knowledge.retriever import Retriever
 from prestie.knowledge.store import (
     DEFAULT_RESULTS,
@@ -133,6 +141,23 @@ def open_store(settings: Settings, *, reset: bool = False) -> KnowledgeStore:
 
 def open_retriever(settings: Settings) -> Retriever:
     return Retriever(build_embedder(settings), open_store(settings))
+
+
+def build_reranker(settings: Settings, model: str) -> VoyageReranker:
+    return VoyageReranker.from_api_key(settings.require_voyage_api_key(), model)
+
+
+# Systems whose top passages are pooled for relevance judging: every retrieval
+# variant compared in the eval, so no system is favored by the labels.
+# (label, rerank model or None, spec filter)
+JUDGE_POOL_SYSTEMS = (
+    ("vector", None, False),
+    ("vector+filter", None, True),
+    ("rerank-lite+filter", "rerank-2.5-lite", True),
+    ("rerank", "rerank-2.5", False),
+    ("rerank+filter", "rerank-2.5", True),
+)
+DEFAULT_POOL_DEPTH = 3
 
 
 def build_anthropic_client(settings: Settings, **options: Any) -> anthropic.Anthropic:
@@ -233,7 +258,22 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Filter each search on the case's spec, as the agent does",
     )
+    evaluation.add_argument(
+        "--hand-labels-only",
+        action="store_true",
+        help="Ignore the LLM-judged relevant passages (judge-retrieval)",
+    )
     evaluation.set_defaults(handler=_eval)
+
+    judge = commands.add_parser(
+        "judge-retrieval",
+        help="Pool the top passages of every retrieval variant and have an LLM "
+        "judge their relevance (completes the eval labels)",
+    )
+    judge.add_argument("--cases", type=Path, default=DEFAULT_EVAL_CASES)
+    judge.add_argument("--depth", type=int, default=DEFAULT_POOL_DEPTH)
+    judge.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
+    judge.set_defaults(handler=_judge_retrieval)
 
     chat = commands.add_parser("chat", help="Ask the Blood DK assistant (Claude + RAG)")
     chat.add_argument(
@@ -359,12 +399,61 @@ def _eval(args: argparse.Namespace) -> int:
         cases = load_cases(args.cases)
         retriever = open_retriever(load_settings())
         report = evaluate(
-            cases, retriever.search, k=args.k, spec_filter=args.spec_filter
+            cases,
+            retriever.search,
+            k=args.k,
+            spec_filter=args.spec_filter,
+            judged=not args.hand_labels_only,
         )
     except KNOWLEDGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(_format_report(report, spec_filter=args.spec_filter))
+    return 0
+
+
+def _judge_retrieval(args: argparse.Namespace) -> int:
+    try:
+        cases = load_cases(args.cases)
+        settings = load_settings()
+        embedder, store = build_embedder(settings), open_store(settings)
+        systems = [
+            (
+                Retriever(
+                    embedder,
+                    store,
+                    reranker=build_reranker(settings, model) if model else None,
+                ),
+                spec_filter,
+            )
+            for _, model, spec_filter in JUDGE_POOL_SYSTEMS
+        ]
+        judge = RelevanceJudge(build_eval_client(settings), model=args.judge_model)
+        judgments = {}
+        for index, case in enumerate(cases):
+            hit_lists = [
+                retriever.search(
+                    case.question,
+                    n_results=args.depth,
+                    where=metadata_filter(case.spec) if spec_filter else None,
+                )
+                for retriever, spec_filter in systems
+            ]
+            passages = pool_passages(case, hit_lists, depth=args.depth)
+            try:
+                judgments[index] = judge.judge(case, passages)
+            except RelevanceJudgeError as exc:
+                print(f"error on {case.question[:50]!r}: {exc}", file=sys.stderr)
+                continue
+            relevant = sum(j.relevant for j in judgments[index])
+            print(
+                f"{len(passages):2} judged, {relevant} relevant  "
+                f"{_truncate(case.question, EVAL_QUESTION_CHARS)}"
+            )
+    except KNOWLEDGE_ERRORS as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    record_judgments(args.cases, judgments, judge_model=judge.model)
     return 0
 
 
