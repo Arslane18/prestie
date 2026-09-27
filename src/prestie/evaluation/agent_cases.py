@@ -38,7 +38,12 @@ from prestie.character.state import (
 from prestie.evaluation.retrieval import EvalCaseError
 
 DEFAULT_CHARACTER_AGE_MINUTES = 5
-ADDON_ONLY_KEYS = ("should_read_state", "expected_quest_ids", "character_age_minutes")
+ADDON_ONLY_KEYS = (
+    "should_read_state",
+    "should_read_gear",
+    "expected_quest_ids",
+    "character_age_minutes",
+)
 UNAVAILABLE_STATE_MESSAGE = "Prestie.lua not found: install the addon, then /reload"
 TURN_KEYS = frozenset({"question", "character"})
 
@@ -68,6 +73,7 @@ class AgentCase:
     character: CharacterState | None = None  # addon mode; None: unavailable
     character_age_minutes: int = DEFAULT_CHARACTER_AGE_MINUTES
     should_read_state: bool | None = None  # None: either is acceptable
+    should_read_gear: bool | None = None  # get_equipment expected (None: either)
     expected_quest_ids: tuple[int, ...] = ()
     # Catalog key every search must filter on (e.g. "shadow-priest"), or None.
     expected_spec: str | None = None
@@ -88,7 +94,8 @@ class AgentCase:
             return "Addon mode: the character state is unavailable (the tool fails)."
         return (
             "Addon mode: the assistant can read the character through "
-            "get_character_state (see its output in the tool results)."
+            "get_character_state and its gear through get_equipment (see their "
+            "output in the tool results)."
         )
 
     def character_source(self, now: datetime) -> "TurnCharacterSource":
@@ -207,6 +214,13 @@ def _with_turn_characters(
     return replace(case, character=states[-1], prior_turns=prior)
 
 
+def _optional_bool(entry: dict[str, Any], key: str, where: str) -> bool | None:
+    value = entry.get(key)
+    if value is not None and not isinstance(value, bool):
+        raise EvalCaseError(f"{where}: '{key}' must be true, false or null")
+    return value
+
+
 def _require_text(entry: dict[str, Any], key: str, where: str) -> None:
     if not isinstance(entry.get(key), str) or not entry[key].strip():
         raise EvalCaseError(f"{where}: '{key}' must be a non-empty string")
@@ -233,9 +247,8 @@ def _with_character(case: AgentCase, entry: dict[str, Any], where: str) -> Agent
     age = entry.get("character_age_minutes", DEFAULT_CHARACTER_AGE_MINUTES)
     if not isinstance(age, int) or isinstance(age, bool) or age < 0:
         raise EvalCaseError(f"{where}: 'character_age_minutes' must be an int >= 0")
-    should_read = entry.get("should_read_state")
-    if should_read is not None and not isinstance(should_read, bool):
-        raise EvalCaseError(f"{where}: 'should_read_state' must be true, false or null")
+    should_read = _optional_bool(entry, "should_read_state", where)
+    should_read_gear = _optional_bool(entry, "should_read_gear", where)
     quest_ids = entry.get("expected_quest_ids", [])
     if not isinstance(quest_ids, list) or not all(
         isinstance(q, int) and not isinstance(q, bool) for q in quest_ids
@@ -247,6 +260,7 @@ def _with_character(case: AgentCase, entry: dict[str, Any], where: str) -> Agent
         character=_character(entry["character"], where),
         character_age_minutes=age,
         should_read_state=should_read,
+        should_read_gear=should_read_gear,
         expected_quest_ids=tuple(quest_ids),
     )
 

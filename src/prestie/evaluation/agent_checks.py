@@ -11,6 +11,7 @@ from html import unescape
 
 from prestie.agent.agent import ToolCall
 from prestie.agent.character_tool import CHARACTER_STATE_TOOL_NAME
+from prestie.agent.equipment_tool import EQUIPMENT_TOOL_NAME
 from prestie.agent.prompts import MAX_ANSWER_LINES, MAX_LINE_CHARS
 from prestie.agent.quest_tool import QUEST_DETAILS_TOOL_NAME
 from prestie.agent.tools import SEARCH_TOOL_NAME
@@ -37,6 +38,7 @@ GATING_CHECKS = (
     "exact_copy",
     "concise",
     "state_read",
+    "gear_read",
     "quest_lookup",
     "spec_filter",
 )
@@ -112,7 +114,10 @@ def programmatic_grades(
             if case.expected_sources
             else None
         ),
-        "state_read": _state_read(case, tool_calls),
+        "state_read": _tool_read(
+            case.should_read_state, tool_calls, CHARACTER_STATE_TOOL_NAME
+        ),
+        "gear_read": _tool_read(case.should_read_gear, tool_calls, EQUIPMENT_TOOL_NAME),
         "quest_lookup": _quest_lookup(case, tool_calls),
         "spec_filter": _spec_filter(case, tool_calls),
     }
@@ -135,11 +140,12 @@ def _citations_valid(cited: Sequence[str], retrieved: Sequence[str]) -> bool:
     return all(url in retrieved or url in retrieved_pages for url in cited)
 
 
-def _state_read(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | None:
-    if case.should_read_state is None:
+def _tool_read(
+    expected: bool | None, tool_calls: Sequence[ToolCall], name: str
+) -> bool | None:
+    if expected is None:
         return None
-    read = count_calls(tool_calls, CHARACTER_STATE_TOOL_NAME) > 0
-    return read == case.should_read_state
+    return (count_calls(tool_calls, name) > 0) == expected
 
 
 def _quest_lookup(case: AgentCase, tool_calls: Sequence[ToolCall]) -> bool | None:
