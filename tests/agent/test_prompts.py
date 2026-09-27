@@ -147,3 +147,10 @@ def test_addon_mode_prompt_explains_how_to_judge_gear():
 
 def test_manual_mode_prompt_does_not_mention_equipment():
     assert "get_equipment" not in build_system_prompt(PlayerContext(level=80))
+
+
+def test_prompt_asks_for_alternative_queries_on_ambiguous_questions():
+    prompt = build_system_prompt(PlayerContext(level=80))
+
+    assert "alternative_queries" in prompt
+    assert "several ways" in prompt
