@@ -47,7 +47,7 @@ def test_output_lists_worn_items_with_their_stats():
         "- head: Heaume du rempart, item level 623; Strength 1200, Stamina 5000, "
         "Critical Strike 400, Haste 300; enchanted, 1 gem, 1 empty socket"
     ) in text
-    assert "- finger1: Anneau, item level 610; no stats; not enchanted" in text
+    assert "- finger1: Anneau, item level 610; no stats\n" in text
 
 
 def test_empty_slots_are_listed():
@@ -62,7 +62,7 @@ def test_bag_items_are_compared_with_what_they_would_replace():
     assert "Equippable items in bags:" in text
     assert (
         "- Anneau trouvé (Divers), item level 626; Mastery 500, Versatility 200; "
-        "not enchanted; finger1: +16 item levels vs Anneau (610); "
+        "finger1: +16 item levels vs Anneau (610); "
         "finger2: slot empty"
     ) in text
 
@@ -109,3 +109,28 @@ def test_equipment_calls_have_a_player_facing_label():
     assert tool_call_label(ToolCall("get_equipment", {})) == (
         "[équipement] lecture du stuff exporté par l'addon"
     )
+
+
+def test_missing_enchants_are_not_flagged_by_the_tool():
+    # Which slots take an enchant depends on the patch: the guides say, not the tool.
+    assert "not enchanted" not in run(geared()).content
+
+
+def two_hander(**overrides):
+    staff = {"slot": 16, "id": 1, "name": "Bâton", "itemLevel": 620, "stats": {}}
+    return geared(equipped=[{**staff, **overrides}])
+
+
+def test_an_empty_off_hand_is_expected_with_a_two_handed_weapon():
+    text = run(two_hander(equipLoc="INVTYPE_2HWEAPON")).content
+
+    assert "- main_hand: Bâton, item level 620; no stats; two-handed" in text
+    assert "off_hand" not in text.split("Empty slots:")[1].split("\n")[0]
+    assert "Off hand: none needed (two-handed weapon)" in text
+
+
+def test_an_empty_off_hand_is_listed_with_a_one_handed_weapon():
+    text = run(two_hander(equipLoc="INVTYPE_WEAPON")).content
+
+    assert "off_hand" in text.split("Empty slots:")[1].split("\n")[0]
+    assert "two-handed" not in text

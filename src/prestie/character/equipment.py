@@ -78,6 +78,10 @@ STAT_NAMES: Mapping[str, str] = MappingProxyType(
         "ITEM_MOD_VERSATILITY": "versatility",
     }
 )
+# Weapons that fill both hands (bows, guns and crossbows included).
+TWO_HANDED_LOCATIONS = frozenset(
+    {"INVTYPE_2HWEAPON", "INVTYPE_RANGED", "INVTYPE_RANGEDRIGHT"}
+)
 EMPTY_SOCKET_PREFIX = "EMPTY_SOCKET_"
 SECONDARY_STATS = ("crit", "haste", "mastery", "versatility")
 
@@ -94,6 +98,11 @@ class EquippedItem:
     enchant_id: int | None
     gems: int
     empty_sockets: int
+    equip_location: str | None = None  # INVTYPE_*; absent in older exports
+
+    @property
+    def two_handed(self) -> bool:
+        return self.equip_location in TWO_HANDED_LOCATIONS
 
 
 @dataclass(frozen=True)
@@ -159,6 +168,7 @@ def _equipped(entry: Mapping[str, Any]) -> EquippedItem:
         enchant_id=optional(entry, "enchant", int),
         gems=optional(entry, "gems", int) or 0,
         empty_sockets=empty_sockets,
+        equip_location=optional(entry, "equipLoc", str),
     )
 
 

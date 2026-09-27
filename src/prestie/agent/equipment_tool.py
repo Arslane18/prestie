@@ -90,7 +90,13 @@ def format_equipment(state: CharacterState, gear: Equipment, now: datetime) -> s
     age_seconds = max(0, int((now - state.captured_at).total_seconds()))
     captured = state.captured_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     worn = {item.slot: item for item in gear.equipped}
-    empty = [slot for slot in SLOT_NAMES.values() if slot not in worn]
+    main_hand = worn.get("main_hand")
+    two_handed = main_hand is not None and main_hand.two_handed
+    empty = [
+        slot
+        for slot in SLOT_NAMES.values()
+        if slot not in worn and not (slot == "off_hand" and two_handed)
+    ]
     spec = state.spec.name if state.spec and state.spec.name else "no spec"
     return "\n".join(
         [
@@ -102,6 +108,11 @@ def format_equipment(state: CharacterState, gear: Equipment, now: datetime) -> s
             "Equipped items:",
             *(_worn_line(item) for item in gear.equipped),
             f"Empty slots: {', '.join(empty) if empty else 'none'}",
+            *(
+                ["Off hand: none needed (two-handed weapon)"]
+                if two_handed and "off_hand" not in worn
+                else []
+            ),
             *_bag_lines(gear.bags, worn),
             "</equipment>",
         ]
@@ -147,18 +158,25 @@ def _describe(item: EquippedItem | BagItem) -> str:
     stats = ", ".join(
         f"{STAT_LABELS[name]} {amount}" for name, amount in item.stats
     )
-    extras = ["enchanted" if item.enchant_id else "not enchanted"]
+    # Only a present enchant is reported: which slots take one depends on the
+    # patch, and the guides (gems/enchants pages) say it, not the tool.
+    extras = ["enchanted"] if item.enchant_id else []
+    if isinstance(item, EquippedItem) and item.two_handed:
+        extras.append("two-handed")
     if item.gems:
         extras.append(f"{item.gems} gem{'s' if item.gems > 1 else ''}")
     if item.empty_sockets:
         plural = "s" if item.empty_sockets > 1 else ""
         extras.append(f"{item.empty_sockets} empty socket{plural}")
     level = "?" if item.item_level is None else item.item_level
-    return (
-        f"{item.name or f'item {item.item_id}'}"
-        f"{f' ({item.sub_type})' if isinstance(item, BagItem) and item.sub_type else ''}"
-        f", item level {level}; {stats or 'no stats'}; {', '.join(extras)}"
-    )
+    sub_type = item.sub_type if isinstance(item, BagItem) else None
+    parts = [
+        f"{item.name or f'item {item.item_id}'}{f' ({sub_type})' if sub_type else ''}"
+        f", item level {level}",
+        stats or "no stats",
+        *([", ".join(extras)] if extras else []),
+    ]
+    return "; ".join(parts)
 
 
 def _bag_lines(

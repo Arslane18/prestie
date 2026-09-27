@@ -150,3 +150,12 @@ def test_addon_errors_while_reading_equipment_are_reported():
 
     assert state.equipment is None
     assert state.equipment_error == "attempt to index a nil value"
+
+
+def test_worn_items_carry_their_equip_location_when_exported():
+    staff = {**HELM, "slot": 16, "equipLoc": "INVTYPE_2HWEAPON"}
+
+    worn = equipment_from_snapshot(raw(equipped=[staff, RING])).equipped
+
+    assert worn[0].two_handed is True
+    assert worn[1].two_handed is False  # older exports: no equipLoc
