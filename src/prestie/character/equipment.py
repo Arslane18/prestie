@@ -88,7 +88,9 @@ class EquippedItem:
     item_id: int
     name: str | None
     item_level: int | None
-    stats: Mapping[str, int]  # guide stat name -> amount on the item
+    # (guide stat name, amount) pairs: a tuple, since dataclasses.asdict
+    # (the API's JSON) cannot copy a read-only mapping.
+    stats: tuple[tuple[str, int], ...]
     enchant_id: int | None
     gems: int
     empty_sockets: int
@@ -101,7 +103,7 @@ class BagItem:
     item_level: int | None
     slots: tuple[str, ...]  # where it could be equipped
     sub_type: str | None  # armor or weapon type, in the client's language
-    stats: Mapping[str, int]
+    stats: tuple[tuple[str, int], ...]
     enchant_id: int | None
     gems: int
     empty_sockets: int
@@ -175,16 +177,16 @@ def _bag_item(entry: Mapping[str, Any]) -> BagItem:
     )
 
 
-def _stats(raw: Mapping[str, Any] | None) -> tuple[Mapping[str, int], int]:
+def _stats(raw: Mapping[str, Any] | None) -> tuple[tuple[tuple[str, int], ...], int]:
     """The ranked stats of an item, and its number of empty sockets."""
     raw = raw or {}
-    stats = {
-        STAT_NAMES[key]: require(raw, key, int) for key in raw if key in STAT_NAMES
-    }
+    stats = tuple(
+        (STAT_NAMES[key], require(raw, key, int)) for key in raw if key in STAT_NAMES
+    )
     empty_sockets = sum(
         require(raw, key, int) for key in raw if key.startswith(EMPTY_SOCKET_PREFIX)
     )
-    return MappingProxyType(stats), empty_sockets
+    return stats, empty_sockets
 
 
 def _character_stats(raw: Mapping[str, Any] | None) -> CharacterStats | None:

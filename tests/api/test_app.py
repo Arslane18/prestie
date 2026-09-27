@@ -227,6 +227,21 @@ def test_character_returns_the_state_with_its_age(agents):
     assert data["class_guides"] == ["discipline-priest", "holy-priest", "shadow-priest"]
 
 
+
+def test_character_card_works_with_an_exported_equipment():
+    # Regression: the item stats could not be copied by asdict (mappingproxy).
+    from prestie.api.app import character_json
+    from prestie.character.equipment import equipment_from_snapshot
+    from tests.character.test_equipment import raw
+
+    state = make_state(equipment=equipment_from_snapshot(raw()))
+
+    data = character_json(state, NOW)
+
+    json.dumps(data)  # sent as an SSE event
+    assert data["character"] == "Lumina"
+    assert "equipment" not in data  # the card does not show gear
+
 def test_character_error_uses_the_envelope(agents):
     watcher = FakeWatcher(error=CharacterStateError("Prestie.lua not found"))
     client = make_client(agents, watcher=watcher)

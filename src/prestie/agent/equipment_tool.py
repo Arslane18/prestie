@@ -145,7 +145,7 @@ def _worn_line(item: EquippedItem) -> str:
 
 def _describe(item: EquippedItem | BagItem) -> str:
     stats = ", ".join(
-        f"{STAT_LABELS[name]} {amount}" for name, amount in item.stats.items()
+        f"{STAT_LABELS[name]} {amount}" for name, amount in item.stats
     )
     extras = ["enchanted" if item.enchant_id else "not enchanted"]
     if item.gems:

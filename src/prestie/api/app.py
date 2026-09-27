@@ -23,7 +23,7 @@ import logging
 import threading
 from pathlib import Path
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
@@ -220,10 +220,16 @@ def _error_event(message: str) -> ServerSentEvent:
     return ServerSentEvent(event="error", data={"message": message})
 
 
+# Gear is for the agent (get_equipment), not the card: kept out of every push.
+CARD_EXCLUDED_FIELDS = ("equipment", "equipment_error")
+
+
 def character_json(state: CharacterState, now: datetime) -> dict[str, Any]:
     age_seconds = max(0, int((now - state.captured_at).total_seconds()))
+    card = replace(state, equipment=None, equipment_error=None)
+    fields = {k: v for k, v in asdict(card).items() if k not in CARD_EXCLUDED_FIELDS}
     return {
-        **asdict(state),
+        **fields,
         "captured_at": state.captured_at.isoformat(),
         "age_minutes": age_seconds // SECONDS_PER_MINUTE,
         "covered_by_knowledge_base": state.covered_by_knowledge_base,
