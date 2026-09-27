@@ -55,7 +55,7 @@ def test_scrape_can_target_one_spec(tmp_path, capsys):
     cache = HtmlCache(tmp_path)
     assert exit_code == 0
     cached = [page.slug for page in ALL_PAGES if cache.get(page.slug) is not None]
-    assert len(cached) == 8
+    assert len(cached) == 9
     assert all(slug.startswith("shadow-priest-") for slug in cached)
 
 

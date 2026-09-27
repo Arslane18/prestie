@@ -10,7 +10,7 @@ def test_url_is_built_from_slug():
 def test_blood_dk_catalog_covers_mvp_pages_without_duplicates():
     slugs = [page.slug for page in BLOOD_DK_PAGES]
 
-    assert len(slugs) == 8
+    assert len(slugs) == 9
     assert len(set(slugs)) == len(slugs)
     assert "blood-death-knight-pve-tank-guide" in slugs
     assert "blood-death-knight-pve-tank-stat-priority" in slugs
@@ -31,6 +31,7 @@ def test_generated_blood_dk_pages_keep_the_original_slugs_and_types():
         ("blood-death-knight-pve-tank-spell-summary", "mechanics"),
         ("blood-death-knight-pve-tank-easy-mode", "beginner"),
         ("blood-death-knight-pve-tank-mythic-plus-tips", "mythic_plus"),
+        ("blood-death-knight-pve-tank-gems-enchants-consumables", "gear"),
     }
 
 
@@ -57,5 +58,5 @@ def test_all_pages_cover_every_spec_of_the_catalog_once():
     from prestie.ingestion.icy_veins.pages import ALL_PAGES
 
     slugs = [page.slug for page in ALL_PAGES]
-    assert len(slugs) == 8 * len(COVERED_SPECS)
+    assert len(slugs) == 9 * len(COVERED_SPECS)
     assert len(set(slugs)) == len(slugs)
