@@ -15,4 +15,6 @@ def tool_call_label(call: ToolCall) -> str:
         return f"[quête] détails de la quête {call.input.get('quest_id', '?')}"
     filters = [call.input.get(key) for key in ("spec", "content_type")]
     scope = "".join(f" [{value}]" for value in filters if value)
-    return f"[recherche] {call.input.get('query', '?')}{scope}"
+    alternatives = len(call.input.get("alternative_queries") or ())
+    more = f" (+{alternatives} formulations)" if alternatives else ""
+    return f"[recherche] {call.input.get('query', '?')}{scope}{more}"

@@ -21,20 +21,18 @@ retrieval eval can compare the strategies directly.
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
 import anthropic
 
 from prestie.knowledge.filters import filtered_spec
+from prestie.knowledge.fusion import reciprocal_rank_fusion
 from prestie.knowledge.store import DEFAULT_RESULTS, SearchHit
 
 STRATEGIES = ("single", "multi", "hyde")
 MULTI_QUERY_COUNT = 3
-# Standard RRF constant: dampens the gap between the first ranks, so agreement
-# between lists matters more than a single list's top position.
-RRF_K = 60
 WRITER_MAX_TOKENS = 4000
 
 WRITER_SYSTEM = """\
@@ -80,21 +78,6 @@ class WritesQueries(Protocol):
     ) -> tuple[str, ...]: ...
 
     def passage(self, question: str, spec_name: str | None) -> str: ...
-
-
-def reciprocal_rank_fusion(
-    hit_lists: Sequence[Sequence[SearchHit]], n_results: int, k: int = RRF_K
-) -> list[SearchHit]:
-    """Merge ranked lists: each passage scores the sum of 1 / (k + rank)."""
-    scores: dict[str, float] = {}
-    first_seen: dict[str, SearchHit] = {}
-    for hits in hit_lists:
-        for rank, hit in enumerate(hits, start=1):
-            scores[hit.id] = scores.get(hit.id, 0.0) + 1 / (k + rank)
-            first_seen.setdefault(hit.id, hit)
-    # sorted() is stable: ties keep their first-appearance order.
-    ranked = sorted(first_seen, key=lambda chunk_id: -scores[chunk_id])
-    return [first_seen[chunk_id] for chunk_id in ranked[:n_results]]
 
 
 class RewritingRetriever:

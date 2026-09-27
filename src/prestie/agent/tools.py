@@ -16,11 +16,13 @@ from prestie.catalog import COVERED_SPECS
 from prestie.ingestion.icy_veins.pages import ALL_PAGES
 from prestie.knowledge.embeddings import EmbeddingError
 from prestie.knowledge.filters import metadata_filter
+from prestie.knowledge.fusion import reciprocal_rank_fusion
 from prestie.knowledge.store import SearchHit
 
 SEARCH_TOOL_NAME = "search_knowledge_base"
 RESULTS_PER_SEARCH = 5
 MAX_QUERY_CHARS = 500
+MAX_ALTERNATIVE_QUERIES = 2
 CONTENT_TYPES = tuple(sorted({page.content_type for page in ALL_PAGES}))
 SPEC_KEYS = [spec.key for spec in COVERED_SPECS]
 # What each guide page holds, so the model can pick a filter knowingly.
@@ -71,6 +73,17 @@ SEARCH_TOOL: dict[str, Any] = {
                 "description": "What to look for, in English, e.g. 'secondary stat "
                 "priority San'layn' or 'when to use Vampiric Blood'.",
             },
+            "alternative_queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "maxItems": MAX_ALTERNATIVE_QUERIES,
+                "description": "Up to 2 other phrasings, searched together with "
+                "the query; passages found by several phrasings rank first. Add "
+                "them when the player's question is ambiguous, vague or informal "
+                "(e.g. 'prendre l'aggro' can mean holding threat like a tank or "
+                "pulling threat by accident), each covering another plausible "
+                "reading. Leave them out for a clear, precise question.",
+            },
             "spec": {
                 "type": "string",
                 "enum": SPEC_KEYS,
@@ -118,12 +131,33 @@ class KnowledgeBaseTool:
         if error:
             return ToolOutcome(error, is_error=True)
         query = tool_input["query"].strip()
+        alternatives = _alternatives(query, tool_input.get("alternative_queries"))
         where = metadata_filter(tool_input.get("spec"), tool_input.get("content_type"))
         try:
-            hits = self._retriever.search(query, n_results=self._n_results, where=where)
+            hit_lists = [
+                self._retriever.search(text, n_results=self._n_results, where=where)
+                for text in (query, *alternatives)
+            ]
         except EmbeddingError as exc:
             return ToolOutcome(f"Search failed: {exc}", is_error=True)
-        return ToolOutcome(format_results(query, hits))
+        hits = (
+            reciprocal_rank_fusion(hit_lists, self._n_results)
+            if alternatives
+            else hit_lists[0]
+        )
+        return ToolOutcome(format_results(query, hits, alternatives))
+
+
+def _alternatives(query: str, raw: Any) -> tuple[str, ...]:
+    """Distinct, non-blank phrasings other than the main query."""
+    seen = {query.casefold()}
+    kept = []
+    for text in raw or ():
+        cleaned = text.strip()
+        if cleaned and cleaned.casefold() not in seen:
+            seen.add(cleaned.casefold())
+            kept.append(cleaned)
+    return tuple(kept)
 
 
 def _validate(tool_input: Mapping[str, Any]) -> str | None:
@@ -132,6 +166,19 @@ def _validate(tool_input: Mapping[str, Any]) -> str | None:
         return "Invalid input: 'query' must be a non-empty string."
     if len(query) > MAX_QUERY_CHARS:
         return f"Invalid input: 'query' must be at most {MAX_QUERY_CHARS} characters."
+    alternatives = tool_input.get("alternative_queries")
+    if alternatives is not None and (
+        not isinstance(alternatives, list)
+        or len(alternatives) > MAX_ALTERNATIVE_QUERIES
+        or not all(
+            isinstance(text, str) and len(text) <= MAX_QUERY_CHARS
+            for text in alternatives
+        )
+    ):
+        return (
+            "Invalid input: 'alternative_queries' must be a list of at most "
+            f"{MAX_ALTERNATIVE_QUERIES} strings of at most {MAX_QUERY_CHARS} characters."
+        )
     spec = tool_input.get("spec")
     if spec is not None and spec not in SPEC_KEYS:
         return f"Invalid input: unknown spec {spec!r}. Valid values: {', '.join(SPEC_KEYS)}."
@@ -144,7 +191,9 @@ def _validate(tool_input: Mapping[str, Any]) -> str | None:
     return None
 
 
-def format_results(query: str, hits: Sequence[SearchHit]) -> str:
+def format_results(
+    query: str, hits: Sequence[SearchHit], alternatives: Sequence[str] = ()
+) -> str:
     if not hits:
         return f"No results in the knowledge base for: {query}"
     passages = "\n".join(
@@ -153,7 +202,12 @@ def format_results(query: str, hits: Sequence[SearchHit]) -> str:
         f"{hit.text}\n</result>"
         for index, hit in enumerate(hits, start=1)
     )
-    return f'<search_results query="{_attr(query)}">\n{passages}\n</search_results>'
+    also = (
+        f' alternative_queries="{_attr(" | ".join(alternatives))}"' if alternatives else ""
+    )
+    return (
+        f'<search_results query="{_attr(query)}"{also}>\n{passages}\n</search_results>'
+    )
 
 
 def _attr(value: object) -> str:
