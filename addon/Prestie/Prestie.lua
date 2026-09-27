@@ -147,6 +147,8 @@ local function readEquipped()
     if link then
       local item = readItem(link, ItemLocation:CreateFromEquipmentSlot(slot))
       item.slot = slot
+      -- tells a two-handed weapon (empty off hand expected) from a one-handed one
+      item.equipLoc = select(4, GetItemInfoInstant(link))
       table.insert(items, item)
     end
   end
