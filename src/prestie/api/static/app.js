@@ -1,4 +1,5 @@
-// Companion window: streamed chat, live character card, native window controls.
+// Companion window: streamed chat, live unit frame, native window controls,
+// and fading out at rest like WoW's chat frame.
 import {
   ageMinutes,
   classColor,
@@ -6,6 +7,7 @@ import {
   renderMarkdown,
   stepLabel,
 } from "./format.js";
+import { createRestController } from "./rest.js";
 
 const API_HEADERS = {
   "Content-Type": "application/json",
@@ -14,6 +16,9 @@ const API_HEADERS = {
 const STALE_AFTER_MINUTES = 30;
 const AGE_REFRESH_MS = 30_000;
 const MAX_INPUT_HEIGHT_PX = 140;
+const REST_DELAY_MS = 6000;
+const WHISPER_TO = "À [Prestie]\u00a0: ";
+const WHISPER_FROM = "[Prestie] chuchote\u00a0:";
 
 const $ = (id) => document.getElementById(id);
 const log = $("log");
@@ -28,9 +33,13 @@ function renderCharacter() {
   const c = character;
   const color = classColor(c.class_token);
   document.documentElement.style.setProperty("--class", color ?? "var(--gold)");
-  $("char-name").textContent = `${c.character} · ${c.realm}`;
+  const realm = document.createElement("span");
+  realm.className = "realm";
+  realm.textContent = ` · ${c.realm}`;
+  $("char-name").replaceChildren(c.character, realm);
   $("char-level").hidden = false;
-  $("char-level").textContent = `Niv. ${c.level}`;
+  $("char-level").textContent = String(c.level);
+  $("char-level").title = `Niveau ${c.level}`;
   const spec = c.spec?.name ?? "Sans spécialisation";
   const hero = c.hero_talent ? ` · ${c.hero_talent}` : "";
   $("char-spec").textContent = `${c.class_name} · ${spec}${hero}`;
@@ -133,9 +142,12 @@ function createTurn() {
   const summary = document.createElement("summary");
   const list = document.createElement("ol");
   steps.append(summary, list);
+  const from = document.createElement("div");
+  from.className = "from";
+  from.textContent = WHISPER_FROM;
   const answer = document.createElement("div");
   answer.className = "answer pending";
-  message.append(steps, answer);
+  message.append(steps, from, answer);
 
   return {
     addStep(text, kind) {
@@ -181,7 +193,7 @@ function addNotice(message, text) {
 async function ask(text) {
   if (busy) return;
   setBusy(true);
-  addMessage("user").textContent = text;
+  addMessage("user").textContent = WHISPER_TO + text;
   const turn = createTurn();
   // Text streamed since the last tool call: an interim note until the answer.
   let roundText = "";
@@ -258,6 +270,8 @@ function autoGrow() {
 function enableWindowControls() {
   const api = window.pywebview?.api;
   if (!api) return;
+  // The native window is transparent: only the page's own frame paints.
+  document.documentElement.classList.add("native");
   document.querySelector(".window-controls").hidden = false;
   const pin = $("pin");
   pin.addEventListener("click", async () => {
@@ -267,6 +281,43 @@ function enableWindowControls() {
   });
   $("minimize").addEventListener("click", () => api.minimize());
   $("close").addEventListener("click", () => api.close());
+  enableSystemGestures(api);
+}
+
+// Moving and resizing are handed to the system (Qt's startSystemMove and
+// startSystemResize, see desktop/prestie_window.py): same feel as a native
+// title bar and borders, snapping included.
+function enableSystemGestures(api) {
+  document.querySelector(".titlebar").addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || event.target.closest("button")) return;
+    event.preventDefault();
+    api.start_move();
+  });
+  for (const handle of document.querySelectorAll(".resize-handle")) {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      api.start_resize(handle.dataset.edges);
+    });
+  }
+}
+
+// --- resting ----------------------------------------------------------------------
+
+function enableResting() {
+  const rest = createRestController({
+    delayMs: REST_DELAY_MS,
+    schedule: (callback, delay) => setTimeout(callback, delay),
+    cancel: (timer) => clearTimeout(timer),
+    onRest: () => document.body.classList.add("rest"),
+    onWake: () => document.body.classList.remove("rest"),
+  });
+  const root = document.documentElement;
+  root.addEventListener("mouseenter", () => rest.pointerEnter());
+  root.addEventListener("mouseleave", () => rest.pointerLeave());
+  window.addEventListener("focus", () => rest.focus());
+  window.addEventListener("blur", () => rest.blur());
+  if (!document.hasFocus()) rest.blur();
 }
 
 // --- wiring ---------------------------------------------------------------------
@@ -293,6 +344,7 @@ window.addEventListener("pywebviewready", enableWindowControls);
 enableWindowControls();
 
 showEmptyState();
+enableResting();
 loadCharacter();
 watchCharacter();
 setInterval(() => character && renderAge(character), AGE_REFRESH_MS);

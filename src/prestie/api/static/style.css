@@ -1,26 +1,62 @@
-/* Prestie companion window: a narrow, dark side panel next to the game.
-   Always dark, whatever the Windows theme: it sits next to WoW, and class
-   colors (white for priests) are designed for dark backgrounds. */
+/* Prestie companion window, styled after WoW's own UI so it blends in next to
+   the game: a textured tooltip-blue frame, a unit frame for the character,
+   the conversation as whispers, gossip options for suggestions. At rest it
+   fades out like the chat frame: the background goes, the text stays.
+   Always dark: it sits on top of the game, and class colors (white for
+   priests) are designed for dark backgrounds. */
+
+@font-face {
+  font-family: "Archivo Narrow";
+  src: url("/static/fonts/archivo-narrow-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Archivo Narrow";
+  src: url("/static/fonts/archivo-narrow-600.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Marcellus";
+  src: url("/static/fonts/marcellus-400.woff2") format("woff2");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Almendra";
+  src: url("/static/fonts/almendra-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
 :root {
-  --bg: #0d0f14;
-  --bg-raised: #141821;
-  --bg-input: #1a1f2b;
-  --line: #242a38;
-  --line-soft: #1b202b;
-  --text: #e8e4da;
-  --text-strong: #f6efdc;
-  --muted: #8b90a0;
-  --faint: #5d6272;
-  --gold: #d6b264;
-  --gold-soft: rgb(214 178 100 / 14%);
-  --gold-text: #1a140a;
-  --user: #1d2433;
-  --ok: #7bc47f;
-  --warn: #e3a94f;
-  --error: #e5746b;
+  /* colors from WoW's API constants (ColorMixin, chat and link colors) */
+  --gold: #ffd100; /* NORMAL_FONT_COLOR */
+  --gold-line: #c9a24a;
+  --white: #ffffff;
+  --text: #f1ede3;
+  --soft: #c3bfd4;
+  --dim: #8a88a0;
+  --whisper: #ff80ff;
+  --quest: #ffff00;
+  --ok: #40c040;
+  --warn: #ff8040;
+  --error: #ff5a4a;
+  --silver: #8e8e9a;
+  --shell: 23 23 48; /* TOOLTIP_DEFAULT_BACKGROUND_COLOR, as r g b */
+  --shell-alpha: 90%;
+  --page-behind: #0c0c12; /* only visible outside the native window */
   --class: var(--gold); /* set from the character's class color */
-  --radius: 12px;
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+
+  --display: "Marcellus", "Palatino Linotype", Georgia, serif; /* Friz Quadrata */
+  --narrow: "Archivo Narrow", "Arial Narrow", "Segoe UI", sans-serif; /* Arial Narrow */
+  --lore: "Almendra", "Palatino Linotype", Georgia, serif; /* Morpheus */
+
+  /* textures, generated: fine grain, and noise lit as a height map for relief */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .75 0 0 0 0 .75 0 0 0 0 .95 0 0 0 .5 -.18'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  --relief: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='440' height='780'%3E%3Cfilter id='r' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.03' numOctaves='5' seed='5'/%3E%3CfeDiffuseLighting lighting-color='%23ffffff' surfaceScale='2.4' diffuseConstant='1.2'%3E%3CfeDistantLight azimuth='225' elevation='55'/%3E%3C/feDiffuseLighting%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23r)'/%3E%3C/svg%3E");
+
+  --fade-out: 400ms; /* waking up is instant, like the game's frames */
   color-scheme: dark;
 }
 
@@ -28,19 +64,44 @@
   box-sizing: border-box;
 }
 
-html,
-body {
+html {
   height: 100%;
-  margin: 0;
+  background: var(--page-behind);
+}
+
+/* In the native window (transparent), only the frame below paints. */
+html.native {
+  background: transparent;
 }
 
 body {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  height: 100%;
+  margin: 0;
+  background: transparent;
   color: var(--text);
-  font: 14px/1.55 var(--font);
+  font: 15px/1.45 var(--narrow);
+  text-shadow: 1px 1px 0 rgb(0 0 0 / 65%);
   -webkit-font-smoothing: antialiased;
+}
+
+/* The frame lives on its own layer so it can fade out, texture included. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid var(--silver);
+  border-radius: 6px;
+  background:
+    var(--grain),
+    var(--relief) 0 0 / 440px 780px,
+    rgb(var(--shell) / var(--shell-alpha));
+  background-blend-mode: normal, multiply, normal;
+  box-shadow: inset 0 0 0 1px #000, inset 0 1px 0 1px rgb(255 255 255 / 8%);
 }
 
 button {
@@ -49,11 +110,11 @@ button {
 }
 
 svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6;
+  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -67,33 +128,60 @@ svg {
   white-space: nowrap;
 }
 
+[hidden] {
+  display: none !important;
+}
+
+.rule {
+  flex: none;
+  height: 1px;
+  margin: 0 12px;
+  background: linear-gradient(90deg, transparent, #c9a24a88 15%, #c9a24a88 85%, transparent);
+}
+
+/* --- resting: fade like the chat frame --- */
+body.rest::before {
+  opacity: 0;
+  transition: opacity var(--fade-out);
+}
+
+body.rest .chrome,
+body.rest .steps {
+  opacity: 0;
+  transition: opacity var(--fade-out);
+}
+
+body.rest {
+  /* the text alone on the game world: a darker shadow keeps it readable */
+  text-shadow: 1px 1px 0 #000, 0 0 4px #000;
+}
+
 /* --- title bar --- */
 .titlebar {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 2px;
-  height: 38px;
-  padding: 0 6px 0 14px;
+  height: 34px;
+  padding: 0 7px 0 12px;
   user-select: none;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   height: 100%;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--muted);
+  font: 16px var(--display);
+  color: var(--gold);
 }
 
 .brand-mark {
-  width: 10px;
-  height: 10px;
-  fill: var(--gold);
-  stroke: none;
+  width: 9px;
+  height: 9px;
+  rotate: 45deg;
+  background: linear-gradient(135deg, #fff3a0, #c98a10);
+  box-shadow: 0 0 0 1px #000;
 }
 
 .spacer {
@@ -103,38 +191,29 @@ svg {
 
 .window-controls {
   display: flex;
+  align-items: center;
   gap: 2px;
-}
-
-.window-controls[hidden] {
-  display: none;
 }
 
 .icon-button {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 28px;
+  width: 26px;
+  height: 24px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 3px;
   background: transparent;
-  color: var(--muted);
+  color: #b8b6c8;
   cursor: pointer;
-  transition: background 120ms, color 120ms;
 }
 
 .icon-button:hover {
-  background: var(--bg-raised);
-  color: var(--text);
+  background: rgb(255 255 255 / 8%);
+  color: var(--white);
 }
 
 .icon-button.active {
   color: var(--gold);
-}
-
-.icon-button.close:hover {
-  background: #c42b1c;
-  color: #fff;
 }
 
 .icon-button:disabled {
@@ -142,82 +221,214 @@ svg {
   cursor: default;
 }
 
-/* --- character card --- */
-.character {
-  margin: 0 12px;
-  padding: 12px 14px 12px 16px;
-  background: var(--bg-raised);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius);
-  box-shadow: inset 3px 0 0 var(--class);
+/* red close button with a gold rim, as on the game's panels */
+.close-button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid #e0b650;
+  border-radius: 3px;
+  background: radial-gradient(circle at 40% 35%, #d8402c, #7a1208 75%);
+  box-shadow: 0 0 0 1px #000, inset 0 1px 1px rgb(255 176 154 / 55%);
+  color: #ffe7a8;
+  cursor: pointer;
 }
 
-.character-head {
+.close-button svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.2;
+}
+
+.close-button:hover {
+  background: radial-gradient(circle at 40% 35%, #f05a40, #8e1a0c 75%);
+}
+
+/* --- resizing: invisible handles on the borders, a grip in the corner --- */
+.resize-handles {
+  display: none;
+}
+
+html.native .resize-handles {
+  display: block;
+}
+
+.resize-handle {
+  position: fixed;
+  z-index: 10;
+}
+
+.edge-top,
+.edge-bottom {
+  left: 10px;
+  right: 10px;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.edge-top {
+  top: 0;
+}
+
+.edge-bottom {
+  bottom: 0;
+}
+
+.edge-left,
+.edge-right {
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  cursor: ew-resize;
+}
+
+.edge-left {
+  left: 0;
+}
+
+.edge-right {
+  right: 0;
+}
+
+[class*="corner-"] {
+  width: 10px;
+  height: 10px;
+}
+
+.corner-top-left {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.corner-top-right {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.corner-bottom-left {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.corner-bottom-right {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+/* three diagonal strokes, like the chat frame's resize grip */
+.resize-grip {
+  position: fixed;
+  right: 3px;
+  bottom: 3px;
+  width: 11px;
+  height: 11px;
+  background: linear-gradient(
+    135deg,
+    transparent 0 42%,
+    var(--gold-line) 42% 50%,
+    transparent 50% 62%,
+    var(--gold-line) 62% 70%,
+    transparent 70% 82%,
+    var(--gold-line) 82% 90%,
+    transparent 90%
+  );
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+body.rest .resize-grip {
+  opacity: 0;
+}
+
+/* --- unit frame --- */
+.unit {
+  display: grid;
+  flex: none;
+  gap: 3px;
+  padding: 10px 14px 11px;
+}
+
+.unit-top {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.char-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--class);
+  gap: 10px;
 }
 
 .level {
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--gold-soft);
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid var(--gold-line);
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #2c2a3a, #0d0c16);
+  box-shadow: 0 0 0 1px #000, inset 0 0 0 1px #000;
   color: var(--gold);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.who {
+  display: grid;
+  min-width: 0;
+}
+
+.char-name {
+  overflow: hidden;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--class);
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.realm {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--dim);
+}
+
 .char-spec {
-  margin-top: 1px;
-  color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
+  color: var(--soft);
 }
 
 .char-quest {
   display: flex;
-  flex-direction: column;
-  margin-top: 10px;
-  padding-top: 9px;
-  border-top: 1px solid var(--line-soft);
-}
-
-.char-quest[hidden],
-.level[hidden],
-.status[hidden] {
-  display: none;
+  gap: 6px;
+  align-items: baseline;
+  margin-top: 5px;
+  font-size: 14px;
 }
 
 .label {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--faint);
+  flex: none;
+  color: var(--gold);
 }
 
 .quest-title {
-  color: var(--text-strong);
+  color: var(--quest);
 }
 
 .status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
+  gap: 0 7px;
+  font-size: 13px;
+  color: var(--dim);
 }
 
 .status::before {
@@ -227,6 +438,7 @@ svg {
   height: 7px;
   border-radius: 50%;
   background: var(--ok);
+  box-shadow: 0 0 4px var(--ok);
 }
 
 .status.warn {
@@ -235,6 +447,7 @@ svg {
 
 .status.warn::before {
   background: var(--warn);
+  box-shadow: 0 0 4px var(--warn);
 }
 
 .status.error {
@@ -243,67 +456,25 @@ svg {
 
 .status.error::before {
   background: var(--error);
+  box-shadow: 0 0 4px var(--error);
 }
 
 code {
-  padding: 0 4px;
-  border-radius: 4px;
-  background: var(--gold-soft);
   color: var(--gold);
-  font: 12px/1.4 "Cascadia Mono", Consolas, monospace;
+  font: inherit;
 }
 
-/* --- conversation --- */
+/* --- conversation: whispers --- */
 .log {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
   overflow-y: auto;
-  padding: 18px 16px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  padding: 12px 14px 8px;
   scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
-}
-
-.empty {
-  margin: auto 0;
-  text-align: center;
-}
-
-.empty-title {
-  margin: 0 0 4px;
-  color: var(--text-strong);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.empty-text {
-  margin: 0 auto 16px;
-  max-width: 30ch;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.suggestions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.suggestion {
-  padding: 9px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 120ms, background 120ms;
-}
-
-.suggestion:hover {
-  border-color: var(--gold);
-  background: var(--gold-soft);
+  scrollbar-color: var(--gold-line) transparent;
 }
 
 .message {
@@ -311,27 +482,26 @@ code {
 }
 
 .message.user {
-  align-self: flex-end;
-  max-width: 86%;
-  padding: 8px 12px;
-  border-radius: 14px 14px 4px 14px;
-  background: var(--user);
+  color: var(--whisper);
   white-space: pre-wrap;
 }
 
 .message.assistant {
-  padding-left: 12px;
-  border-left: 2px solid var(--gold-soft);
+  display: grid;
+  gap: 3px;
 }
 
-.message.assistant.error {
-  border-left-color: var(--error);
+.from {
+  color: var(--whisper);
+}
+
+.message.assistant.error .answer {
   color: var(--error);
 }
 
 .answer p,
 .answer ul {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
 }
 
 .answer > :last-child {
@@ -339,62 +509,65 @@ code {
 }
 
 .answer ul {
-  padding-left: 0;
+  display: grid;
+  gap: 2px;
+  padding: 0;
   list-style: none;
 }
 
 .answer li {
   position: relative;
-  padding-left: 16px;
-}
-
-.answer li + li {
-  margin-top: 4px;
+  padding-left: 15px;
 }
 
 .answer li::before {
   content: "";
   position: absolute;
+  top: 0.6em;
   left: 2px;
-  top: 0.62em;
   width: 5px;
   height: 5px;
-  transform: rotate(45deg);
+  rotate: 45deg;
   background: var(--gold);
+  box-shadow: 0 0 0 1px #000;
 }
 
 .answer strong {
-  color: var(--text-strong);
+  color: var(--white);
   font-weight: 600;
 }
 
 .answer a {
-  color: var(--gold);
-  text-decoration: underline dotted;
+  color: var(--white);
+  text-decoration: underline dotted var(--dim);
   text-underline-offset: 2px;
 }
 
+.answer a:hover {
+  color: var(--gold);
+}
+
+/* blinking caret while the first words are on their way */
 .answer.pending:empty::after {
   content: "";
   display: inline-block;
   width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--gold);
-  animation: pulse 1s ease-in-out infinite;
+  height: 14px;
+  vertical-align: -2px;
+  background: var(--text);
+  animation: blink 1s steps(1) infinite;
 }
 
-@keyframes pulse {
+@keyframes blink {
   50% {
-    opacity: 0.25;
+    opacity: 0;
   }
 }
 
 /* steps: tool calls and interim notes, folded by default */
 .steps {
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--faint);
+  font-size: 13px;
+  color: var(--dim);
 }
 
 .steps summary {
@@ -410,30 +583,35 @@ code {
 }
 
 .steps summary::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 120ms;
+  content: "▸";
+  font-size: 10px;
+  color: var(--gold-line);
+  transition: rotate 120ms;
 }
 
 .steps[open] summary::before {
-  transform: rotate(45deg);
+  rotate: 90deg;
 }
 
-.steps.running summary {
-  color: var(--muted);
+.steps.running summary::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 2px solid #c9a24a44;
+  border-top-color: var(--gold-line);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    rotate: 360deg;
+  }
 }
 
 .steps ol {
-  margin: 6px 0 0;
+  margin: 2px 0 0;
   padding-left: 18px;
-}
-
-.steps li + li {
-  margin-top: 2px;
 }
 
 .steps .note {
@@ -441,65 +619,126 @@ code {
 }
 
 .notice {
-  margin: 8px 0 0;
-  font-size: 12px;
+  margin: 4px 0 0;
+  font-size: 13px;
   color: var(--warn);
 }
 
-/* --- composer --- */
-.composer {
-  padding: 8px 12px 12px;
-}
-
-.input-wrap {
-  position: relative;
-}
-
-textarea {
-  display: block;
-  width: 100%;
-  max-height: 140px;
-  padding: 11px 48px 11px 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-input);
-  color: var(--text);
-  font: inherit;
-  resize: none;
-  transition: border-color 120ms;
-}
-
-textarea::placeholder {
-  color: var(--faint);
-}
-
-textarea:focus {
-  outline: none;
-  border-color: var(--gold);
-}
-
-.send {
-  position: absolute;
-  right: 7px;
-  bottom: 7px;
+/* --- welcome: gossip options --- */
+.empty {
   display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
+  gap: 10px;
+  margin: auto 0;
+}
+
+.empty-title {
+  margin: 0;
+  font: 700 22px var(--lore);
+  color: var(--gold);
+  text-shadow: 1px 1px 0 #000;
+}
+
+.empty-text {
+  margin: 0;
+  font-size: 14px;
+  color: var(--soft);
+}
+
+.suggestions {
+  display: grid;
+  gap: 2px;
+}
+
+.suggestion {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px;
   border: 0;
-  border-radius: 9px;
-  background: var(--gold);
-  color: var(--gold-text);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  text-shadow: inherit;
   cursor: pointer;
 }
 
-.send svg {
-  stroke-width: 2;
+.suggestion:hover {
+  background: rgb(255 209 0 / 8%);
+  color: var(--gold);
+}
+
+.bubble {
+  flex: none;
+  width: 16px;
+  height: 13px;
+  border-radius: 7px 7px 7px 2px;
+  background: linear-gradient(#fdfdfd, #b9b9c8);
+  box-shadow: 0 0 0 1px #000;
+}
+
+/* --- composer: the chat edit box --- */
+.composer {
+  flex: none;
+  padding: 8px 10px 10px;
+}
+
+.editbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 7px 6px 7px 10px;
+  border: 1px solid #5b5b6e;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 55%);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 80%);
+}
+
+.editbox:focus-within {
+  border-color: var(--gold-line);
+}
+
+.channel {
+  flex: none;
+  padding-top: 1px;
+  color: var(--whisper);
+}
+
+textarea {
+  flex: 1;
+  min-width: 0;
+  max-height: 140px;
+  padding: 1px 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--whisper);
+  caret-color: var(--whisper);
+  font: inherit;
+  text-shadow: inherit;
+  resize: none;
+}
+
+.send {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border: 1px solid #44445a;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.send:hover {
+  border-color: var(--gold-line);
+  color: var(--gold);
 }
 
 .send:disabled {
-  background: var(--line);
-  color: var(--faint);
+  opacity: 0.35;
   cursor: default;
 }
 

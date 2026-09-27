@@ -5,20 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Prestie</title>
     <link rel="icon" href="data:," />
+    <link rel="preload" href="/static/fonts/archivo-narrow-400.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/static/style.css" />
     <script type="module" src="/static/app.js"></script>
   </head>
   <body>
     <!-- Title bar: the native window is frameless, so the page draws its own.
-         Only elements with pywebview-drag-region move the window. -->
-    <div class="titlebar">
-      <div class="brand pywebview-drag-region">
-        <svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M8 1 15 8 8 15 1 8Z" />
-        </svg>
-        <span class="pywebview-drag-region">Prestie</span>
+         Dragging it (outside its buttons) moves the window, see app.js. -->
+    <div class="titlebar chrome">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Prestie</span>
       </div>
-      <div class="spacer pywebview-drag-region"></div>
+      <div class="spacer"></div>
       <button type="button" id="reset" class="icon-button" title="Nouvelle conversation">
         <svg viewBox="0 0 16 16" aria-hidden="true">
           <path d="M8 3.5v9M3.5 8h9" />
@@ -36,57 +35,73 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8.5h8" /></svg>
           <span class="visually-hidden">Réduire</span>
         </button>
-        <button type="button" id="close" class="icon-button close" title="Fermer">
+        <button type="button" id="close" class="close-button" title="Fermer">
           <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+            <path d="M5 5l6 6M11 5l-6 6" />
           </svg>
           <span class="visually-hidden">Fermer</span>
         </button>
       </div>
     </div>
+    <div class="rule chrome"></div>
 
-    <header class="character" aria-live="polite">
-      <div class="character-head">
-        <span id="char-name" class="char-name">En attente du personnage…</span>
+    <!-- Unit frame: the character exported by the addon. -->
+    <header class="unit" aria-live="polite">
+      <div class="unit-top">
         <span id="char-level" class="level" hidden></span>
+        <div class="who">
+          <span id="char-name" class="char-name">En attente du personnage…</span>
+          <span id="char-spec" class="char-spec"></span>
+        </div>
       </div>
-      <div id="char-spec" class="char-spec"></div>
       <div id="char-quest" class="char-quest" hidden>
-        <span class="label">Quête suivie</span>
+        <span class="label">Quête suivie :</span>
         <span id="char-quest-title" class="quest-title"></span>
       </div>
       <div id="char-status" class="status" hidden></div>
     </header>
+    <div class="rule chrome"></div>
 
     <main id="log" class="log" aria-live="polite"></main>
 
-    <form id="composer" class="composer">
-      <label for="question" class="visually-hidden">Ta question</label>
-      <div class="input-wrap">
-        <textarea
-          id="question"
-          rows="1"
-          maxlength="2000"
-          placeholder="Pose ta question…"
-          required
-        ></textarea>
+    <!-- Composer: WoW's chat edit box, on the whisper channel. -->
+    <form id="composer" class="composer chrome">
+      <div class="editbox">
+        <label for="question" class="channel">Chuchoter à Prestie&nbsp;:</label>
+        <textarea id="question" rows="1" maxlength="2000" required></textarea>
         <button type="submit" id="send" class="send" title="Envoyer (Entrée)">
           <svg viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M8 13V3.5M3.5 8 8 3.5 12.5 8" />
+            <path d="M12.5 4v3.5a2 2 0 0 1-2 2H4M6.5 7 4 9.5 6.5 12" />
           </svg>
           <span class="visually-hidden">Envoyer</span>
         </button>
       </div>
     </form>
 
+    <!-- Resize handles on the borders and corners (native window only), and
+         the grip drawn in the bottom-right corner like the chat frame's. -->
+    <div class="resize-handles" aria-hidden="true">
+      <div class="resize-handle edge-top" data-edges="top"></div>
+      <div class="resize-handle edge-bottom" data-edges="bottom"></div>
+      <div class="resize-handle edge-left" data-edges="left"></div>
+      <div class="resize-handle edge-right" data-edges="right"></div>
+      <div class="resize-handle corner-top-left" data-edges="top,left"></div>
+      <div class="resize-handle corner-top-right" data-edges="top,right"></div>
+      <div class="resize-handle corner-bottom-left" data-edges="bottom,left"></div>
+      <div class="resize-handle corner-bottom-right" data-edges="bottom,right"></div>
+      <div class="resize-grip chrome"></div>
+    </div>
+
+    <!-- Welcome: suggestions look like an NPC's gossip options. -->
     <template id="empty-state">
       <div class="empty">
         <p class="empty-title">Que veux-tu savoir&nbsp;?</p>
         <p class="empty-text">Je lis ton personnage depuis l'addon&nbsp;: pas besoin de me donner ton niveau ou ta spé.</p>
         <div class="suggestions">
-          <button type="button" class="suggestion">C'est quoi ma quête en cours&nbsp;?</button>
-          <button type="button" class="suggestion">Quelle stat secondaire je monte en priorité&nbsp;?</button>
-          <button type="button" class="suggestion">C'est quoi la rotation de base&nbsp;?</button>
+          <button type="button" class="suggestion"><span class="bubble" aria-hidden="true"></span>C'est quoi ma quête en cours&nbsp;?</button>
+          <button type="button" class="suggestion"><span class="bubble" aria-hidden="true"></span>Quelle stat secondaire je monte en priorité&nbsp;?</button>
+          <button type="button" class="suggestion"><span class="bubble" aria-hidden="true"></span>C'est quoi la rotation de base&nbsp;?</button>
+          <button type="button" class="suggestion"><span class="bubble" aria-hidden="true"></span>Mon équipement est-il à jour&nbsp;?</button>
         </div>
       </div>
     </template>

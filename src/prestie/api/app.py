@@ -58,9 +58,11 @@ BUSY_MESSAGE = "Une réponse est déjà en cours, attends qu'elle se termine."
 UNEXPECTED_ERROR_MESSAGE = "Erreur inattendue du serveur Prestie (voir ses logs)."
 STATIC_DIR = Path(__file__).parent / "static"
 # Scripts and styles only from our own files: even if model or game text ever
-# reached the page as HTML, no inline script could run.
+# reached the page as HTML, no inline script could run. 'unsafe-eval' is only
+# there for pywebview's Qt backend, which builds window.pywebview.api with
+# `new Function`; our own code never evaluates strings.
 CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'"
 )

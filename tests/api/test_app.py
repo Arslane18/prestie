@@ -326,8 +326,29 @@ def test_index_is_served_with_a_strict_content_security_policy(agents):
     assert "unsafe-inline" not in policy
 
 
+def test_policy_lets_the_native_window_bridge_run_but_no_inline_script(agents):
+    # pywebview's Qt backend builds window.pywebview.api with `new Function`:
+    # without 'unsafe-eval' the page cannot move, resize or close the window
+    # (measured with a real drag). Injected markup still cannot run scripts.
+    policy = make_client(agents).get("/").headers["content-security-policy"]
+    script_src = next(part for part in policy.split(";") if "script-src" in part)
+
+    assert script_src.split() == ["script-src", "'self'", "'unsafe-eval'"]
+    assert "unsafe-inline" not in policy
+
+
 @pytest.mark.parametrize(
-    "path, media", [("/static/app.js", "javascript"), ("/static/style.css", "css")]
+    "path, media",
+    [
+        ("/static/app.js", "javascript"),
+        ("/static/style.css", "css"),
+        ("/static/rest.js", "javascript"),
+        # Fonts are self-hosted: the CSP only allows our own origin.
+        ("/static/fonts/marcellus-400.woff2", "woff2"),
+        ("/static/fonts/archivo-narrow-400.woff2", "woff2"),
+        ("/static/fonts/archivo-narrow-600.woff2", "woff2"),
+        ("/static/fonts/almendra-700.woff2", "woff2"),
+    ],
 )
 def test_static_assets_are_served(agents, path, media):
     response = make_client(agents).get(path)
@@ -344,10 +365,10 @@ def test_ui_helpers_pass_their_node_tests():
     node = shutil.which("node")
     if node is None:
         pytest.skip("node not installed")
-    test_file = Path(__file__).parent / "ui" / "format.test.mjs"
+    test_files = sorted(str(path) for path in (Path(__file__).parent / "ui").glob("*.test.mjs"))
 
     result = subprocess.run(
-        [node, "--test", str(test_file)], capture_output=True, text=True, timeout=60
+        [node, "--test", *test_files], capture_output=True, text=True, timeout=60
     )
 
     assert result.returncode == 0, result.stdout + result.stderr

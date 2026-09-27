@@ -21,6 +21,31 @@ def test_launcher_declares_its_own_dependencies():
     assert '"pywebview' in header
 
 
+def test_launcher_uses_the_qt_backend_for_real_transparency():
+    # WebView2 (pywebview's default on Windows) has no per-pixel transparency:
+    # measured in prototypes/transparency-probe, only Qt fades the background
+    # while keeping the text fully opaque.
+    header = LAUNCHER.read_text(encoding="utf-8")
+    launcher = load_launcher()
+
+    assert '"pywebview[qt]' in header
+    assert launcher.GUI == "qt"
+
+
+def test_window_is_transparent_frameless_and_on_top():
+    launcher = load_launcher()
+
+    settings = launcher.window_settings("http://localhost:8000", x=10, y=20)
+
+    assert settings["url"] == "http://localhost:8000"
+    assert settings["transparent"] is True
+    assert settings["frameless"] is True
+    assert settings["on_top"] is True
+    assert settings["easy_drag"] is False
+    assert (settings["x"], settings["y"]) == (10, 20)
+    assert (settings["width"], settings["height"]) == (420, 760)
+
+
 def test_window_sits_against_the_right_edge_vertically_centered():
     launcher = load_launcher()
 
@@ -52,11 +77,61 @@ class FakeWindow:
         self.calls.append("destroy")
 
 
+class FakeSystemGestures:
+    """Stands in for Qt's startSystemMove / startSystemResize."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def start_move(self):
+        self.calls.append(("move",))
+
+    def start_resize(self, edges):
+        self.calls.append(("resize", edges))
+
+
+def attached_controls(launcher):
+    controls = launcher.WindowControls()
+    window, gestures = FakeWindow(), FakeSystemGestures()
+    controls._attach(window, gestures)
+    return controls, window, gestures
+
+
+def test_title_bar_drag_hands_the_move_to_the_system():
+    launcher = load_launcher()
+    controls, _, gestures = attached_controls(launcher)
+
+    controls.start_move()
+
+    assert gestures.calls == [("move",)]
+
+
+def test_edge_drag_hands_the_resize_to_the_system():
+    launcher = load_launcher()
+    controls, _, gestures = attached_controls(launcher)
+
+    controls.start_resize("left,bottom")
+
+    assert gestures.calls == [("resize", frozenset({"left", "bottom"}))]
+
+
+def test_resize_rejects_unknown_or_missing_edges():
+    # The edges come from the page: validate them at the boundary.
+    launcher = load_launcher()
+    controls, _, gestures = attached_controls(launcher)
+
+    for bad in ("", "left,middle", "diagonal", "left,right"):
+        try:
+            controls.start_resize(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} was accepted")
+    assert gestures.calls == []
+
+
 def test_controls_drive_the_window():
     launcher = load_launcher()
-    window = FakeWindow()
-    controls = launcher.WindowControls()
-    controls._attach(window)
+    controls, window, _ = attached_controls(launcher)
 
     assert controls.set_on_top(False) is False
     assert window.on_top is False
