@@ -208,3 +208,31 @@ def test_shipped_cases_cover_every_spec():
     cases = load_cases(SHIPPED_CASES)
 
     assert {case.spec for case in cases} == {spec.key for spec in COVERED_SPECS}
+
+
+def test_cases_carry_optional_tags(tmp_path):
+    from prestie.evaluation.retrieval import load_cases
+
+    path = tmp_path / "cases.json"
+    path.write_text(
+        '[{"question": "q", "expected": [], "tags": ["hard"]},'
+        ' {"question": "r", "expected": []}]',
+        encoding="utf-8",
+    )
+
+    tagged, untagged = load_cases(path)
+
+    assert tagged.tags == ("hard",)
+    assert untagged.tags == ()
+
+
+def test_tags_must_be_strings(tmp_path):
+    import pytest
+
+    from prestie.evaluation.retrieval import EvalCaseError, load_cases
+
+    path = tmp_path / "cases.json"
+    path.write_text('[{"question": "q", "expected": [], "tags": "hard"}]')
+
+    with pytest.raises(EvalCaseError, match="tags"):
+        load_cases(path)

@@ -84,6 +84,14 @@ from prestie.knowledge.embeddings import Embedder, EmbeddingError, VoyageEmbedde
 from prestie.knowledge.filters import metadata_filter
 from prestie.knowledge.reranker import VoyageReranker
 from prestie.knowledge.retriever import Retriever
+from prestie.knowledge.rewriting import (
+    STRATEGIES,
+    CachedQueryWriter,
+    ClaudeQueryWriter,
+    QueryRewriteError,
+    RewritingRetriever,
+    WritesQueries,
+)
 from prestie.knowledge.store import (
     DEFAULT_RESULTS,
     EmbeddingModelMismatchError,
@@ -93,6 +101,8 @@ from prestie.knowledge.store import (
 
 DEFAULT_CACHE_DIR = Path("data/raw/icy-veins")
 DEFAULT_EVAL_CASES = Path("evals/retrieval_cases.json")
+# Every rewrite is kept: the judge and the eval runs then see the same queries.
+DEFAULT_REWRITE_CACHE = Path("data/rewrites/cache.json")
 DEFAULT_QUEST_CACHE_DIR = Path("data/blizzard/quests")
 DEFAULT_API_PORT = 8000
 LOCALHOST = "127.0.0.1"  # never 0.0.0.0: the API spends the player's API credits
@@ -148,15 +158,24 @@ def build_reranker(settings: Settings, model: str) -> VoyageReranker:
     return VoyageReranker.from_api_key(settings.require_voyage_api_key(), model)
 
 
+def build_query_writer(settings: Settings, model: str) -> WritesQueries:
+    return CachedQueryWriter(
+        ClaudeQueryWriter(build_eval_client(settings), model),
+        DEFAULT_REWRITE_CACHE,
+        model=model,
+    )
+
+
 # Systems whose top passages are pooled for relevance judging: every retrieval
 # variant compared in the eval, so no system is favored by the labels.
-# (label, rerank model or None, spec filter)
+# (label, rerank model or None, spec filter, rewriting strategy or None)
 JUDGE_POOL_SYSTEMS = (
-    ("vector", None, False),
-    ("vector+filter", None, True),
-    ("rerank-lite+filter", "rerank-2.5-lite", True),
-    ("rerank", "rerank-2.5", False),
-    ("rerank+filter", "rerank-2.5", True),
+    ("vector", None, False, None),
+    ("vector+filter", None, True, None),
+    ("rerank-lite+filter", "rerank-2.5-lite", True, None),
+    ("rerank", "rerank-2.5", False, None),
+    ("rerank+filter", "rerank-2.5", True, None),
+    *((f"{strategy}+filter", None, True, strategy) for strategy in STRATEGIES),
 )
 DEFAULT_POOL_DEPTH = 3
 
@@ -276,6 +295,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Rerank the vector candidates with this Voyage model "
         "(e.g. rerank-2.5, rerank-2.5-lite)",
     )
+    _add_rewrite_arguments(evaluation, strategy=True)
+    evaluation.add_argument("--tag", help="Only the cases with this tag (e.g. hard)")
     evaluation.set_defaults(handler=_eval)
 
     judge = commands.add_parser(
@@ -286,6 +307,7 @@ def _build_parser() -> argparse.ArgumentParser:
     judge.add_argument("--cases", type=Path, default=DEFAULT_EVAL_CASES)
     judge.add_argument("--depth", type=int, default=DEFAULT_POOL_DEPTH)
     judge.add_argument("--judge-model", default=DEFAULT_JUDGE_MODEL)
+    _add_rewrite_arguments(judge, strategy=False)
     judge.set_defaults(handler=_judge_retrieval)
 
     chat = commands.add_parser("chat", help="Ask the Blood DK assistant (Claude + RAG)")
@@ -333,6 +355,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     agent_eval.set_defaults(handler=_eval_agent)
     return parser
+
+
+def _add_rewrite_arguments(parser: argparse.ArgumentParser, *, strategy: bool) -> None:
+    if strategy:
+        parser.add_argument(
+            "--rewrite",
+            choices=STRATEGIES,
+            help="Rewrite each question with an LLM before searching",
+        )
+    parser.add_argument(
+        "--rewrite-model",
+        help="Model writing the rewrites (default: the agent's model)",
+    )
 
 
 def _add_spec_argument(parser: argparse.ArgumentParser) -> None:
@@ -409,23 +444,40 @@ def _search(args: argparse.Namespace) -> int:
 
 def _eval(args: argparse.Namespace) -> int:
     try:
-        cases = load_cases(args.cases)
+        cases = [
+            case
+            for case in load_cases(args.cases)
+            if args.tag is None or args.tag in case.tags
+        ]
         settings = load_settings()
         reranker = build_reranker(settings, args.rerank) if args.rerank else None
         retriever = Retriever(
             build_embedder(settings), open_store(settings), reranker=reranker
         )
+        rewrite_model = args.rewrite_model or settings.claude_model
+        searcher = (
+            RewritingRetriever(
+                retriever, build_query_writer(settings, rewrite_model), args.rewrite
+            )
+            if args.rewrite
+            else retriever
+        )
         report = evaluate(
             cases,
-            retriever.search,
+            searcher.search,
             k=args.k,
             spec_filter=args.spec_filter,
             judged=not args.hand_labels_only,
         )
-    except KNOWLEDGE_ERRORS as exc:
+    except (*KNOWLEDGE_ERRORS, QueryRewriteError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(_format_report(report, spec_filter=args.spec_filter, rerank=args.rerank))
+    rewrite = f"{args.rewrite} ({rewrite_model})" if args.rewrite else None
+    print(
+        _format_report(
+            report, spec_filter=args.spec_filter, rerank=args.rerank, rewrite=rewrite
+        )
+    )
     return 0
 
 
@@ -434,32 +486,37 @@ def _judge_retrieval(args: argparse.Namespace) -> int:
         cases = load_cases(args.cases)
         settings = load_settings()
         embedder, store = build_embedder(settings), open_store(settings)
-        systems = [
-            (
-                Retriever(
-                    embedder,
-                    store,
-                    reranker=build_reranker(settings, model) if model else None,
-                ),
-                spec_filter,
+        writer = build_query_writer(
+            settings, args.rewrite_model or settings.claude_model
+        )
+
+        def system(model: str | None, rewrite: str | None) -> Any:
+            retriever = Retriever(
+                embedder,
+                store,
+                reranker=build_reranker(settings, model) if model else None,
             )
-            for _, model, spec_filter in JUDGE_POOL_SYSTEMS
+            return RewritingRetriever(retriever, writer, rewrite) if rewrite else retriever
+
+        systems = [
+            (system(model, rewrite), spec_filter)
+            for _, model, spec_filter, rewrite in JUDGE_POOL_SYSTEMS
         ]
         judge = RelevanceJudge(build_eval_client(settings), model=args.judge_model)
         judgments = {}
         for index, case in enumerate(cases):
-            hit_lists = [
-                retriever.search(
-                    case.question,
-                    n_results=args.depth,
-                    where=metadata_filter(case.spec) if spec_filter else None,
-                )
-                for retriever, spec_filter in systems
-            ]
-            passages = pool_passages(case, hit_lists, depth=args.depth)
             try:
+                hit_lists = [
+                    retriever.search(
+                        case.question,
+                        n_results=args.depth,
+                        where=metadata_filter(case.spec) if spec_filter else None,
+                    )
+                    for retriever, spec_filter in systems
+                ]
+                passages = pool_passages(case, hit_lists, depth=args.depth)
                 judgments[index] = judge.judge(case, passages)
-            except RelevanceJudgeError as exc:
+            except (RelevanceJudgeError, QueryRewriteError) as exc:
                 print(f"error on {case.question[:50]!r}: {exc}", file=sys.stderr)
                 continue
             relevant = sum(j.relevant for j in judgments[index])
@@ -475,7 +532,11 @@ def _judge_retrieval(args: argparse.Namespace) -> int:
 
 
 def _format_report(
-    report: EvalReport, *, spec_filter: bool = False, rerank: str | None = None
+    report: EvalReport,
+    *,
+    spec_filter: bool = False,
+    rerank: str | None = None,
+    rewrite: str | None = None,
 ) -> str:
     lines = [f"{'rank':>4}  {'question':<{EVAL_QUESTION_CHARS}}  top result (distance)"]
     lines.extend(_format_case(result) for result in report.results)
@@ -488,7 +549,7 @@ def _format_report(
     lines.append(
         f"spec_precision@{report.k} = {report.spec_precision(report.k):.2f} "
         f"(spec filter {'on' if spec_filter else 'off'}, "
-        f"rerank {rerank or 'off'})"
+        f"rerank {rerank or 'off'}, rewrite {rewrite or 'off'})"
     )
     return "\n".join(lines)
 

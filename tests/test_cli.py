@@ -643,9 +643,16 @@ def test_judge_retrieval_pools_every_system_and_records_verdicts(
     monkeypatch.setattr(cli, "RelevanceJudge", FakeJudge)
     monkeypatch.setattr(cli, "build_eval_client", lambda settings: object())
     monkeypatch.setattr(cli, "build_reranker", lambda settings, model: None)
+    writers = []
+    monkeypatch.setattr(
+        cli,
+        "build_query_writer",
+        lambda settings, model: writers.append(model) or StatsWriter(),
+    )
     capsys.readouterr()
 
     assert cli.main(["judge-retrieval", "--cases", str(cases), "--depth", "2"]) == 0
+    assert writers, "rewriting systems are pooled too"
 
     entry = json.loads(cases.read_text(encoding="utf-8"))[0]
     assert len(judged) == 1 and judged[0]
@@ -680,3 +687,56 @@ def test_eval_can_rerank_the_candidates(knowledge_env, tmp_path, monkeypatch, ca
     assert exit_code == 0
     assert built == ["rerank-2.5-lite"]
     assert "rerank-2.5-lite" in out
+
+
+class StatsWriter:
+    """Rewrites every question into the fixture's vocabulary."""
+
+    def queries(self, question, spec_name, count):
+        return tuple("stats" for _ in range(count))
+
+    def passage(self, question, spec_name):
+        return "stats"
+
+
+def test_eval_can_rewrite_the_question(knowledge_env, tmp_path, monkeypatch, capsys):
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps([{"question": "stats", "expected": ["fire-mage-leveling-guide"]}]),
+        encoding="utf-8",
+    )
+    models = []
+    monkeypatch.setattr(
+        cli,
+        "build_query_writer",
+        lambda settings, model: models.append(model) or StatsWriter(),
+    )
+    capsys.readouterr()
+
+    exit_code = cli.main(
+        ["eval", "--cases", str(cases), "--rewrite", "multi", "--rewrite-model", "m"]
+    )
+
+    assert exit_code == 0
+    assert models == ["m"]
+    assert "rewrite multi (m)" in capsys.readouterr().out
+
+
+def test_eval_can_select_tagged_cases(knowledge_env, tmp_path, capsys):
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    cases = tmp_path / "cases.json"
+    cases.write_text(
+        json.dumps(
+            [
+                {"question": "stats", "expected": ["x"], "tags": ["hard"]},
+                {"question": "other", "expected": ["x"]},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    capsys.readouterr()
+
+    assert cli.main(["eval", "--cases", str(cases), "--tag", "hard"]) == 0
+
+    assert "(1 answerable questions" in capsys.readouterr().out

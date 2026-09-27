@@ -1,8 +1,9 @@
 """Chroma metadata filters shared by the search tool and the retrieval eval."""
 
+from collections.abc import Mapping
 from typing import Any
 
-from prestie.catalog import spec_by_key
+from prestie.catalog import COVERED_SPECS, SpecGuide, spec_by_key
 
 
 def metadata_filter(
@@ -17,3 +18,19 @@ def metadata_filter(
     if not conditions:
         return None
     return conditions[0] if len(conditions) == 1 else {"$and": conditions}
+
+
+def filtered_spec(where: Mapping[str, Any] | None) -> SpecGuide | None:
+    """The spec a filter built by `metadata_filter` restricts to, if any."""
+    if not where:
+        return None
+    conditions = where.get("$and", [where])
+    fields = {key: value for condition in conditions for key, value in condition.items()}
+    return next(
+        (
+            spec
+            for spec in COVERED_SPECS
+            if (spec.wow_class, spec.spec) == (fields.get("wow_class"), fields.get("spec"))
+        ),
+        None,
+    )

@@ -50,6 +50,7 @@ class RetrievalCase:
     spec: str | None = None  # catalog key of the spec the question is about
     judged_relevant: tuple[str, ...] = ()  # LLM judge: these passages answer
     judged_irrelevant: tuple[str, ...] = ()  # LLM judge: these do not
+    tags: tuple[str, ...] = ()  # e.g. "hard": vague or indirect wording
 
     @property
     def answerable(self) -> bool:
@@ -191,7 +192,7 @@ def _parse_case(entry: Any, index: int, path: Path) -> RetrievalCase:
         raise EvalCaseError(f"{where}: 'spec' {spec!r} is not a covered spec")
     judged = {
         key: entry.get(key, [])
-        for key in ("judged_relevant", "judged_irrelevant")
+        for key in ("judged_relevant", "judged_irrelevant", "tags")
     }
     for key, value in judged.items():
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
@@ -203,4 +204,5 @@ def _parse_case(entry: Any, index: int, path: Path) -> RetrievalCase:
         spec=spec,
         judged_relevant=tuple(judged["judged_relevant"]),
         judged_irrelevant=tuple(judged["judged_irrelevant"]),
+        tags=tuple(judged["tags"]),
     )
