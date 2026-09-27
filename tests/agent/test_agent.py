@@ -382,3 +382,52 @@ def test_blocks_before_a_fallback_are_not_echoed_except_text():
     echoed = client.requests[1]["messages"][1]["content"]
     assert [block.type for block in echoed] == ["text", "text"]
     assert [block.text for block in echoed] == ["Partial", "Rescued answer"]
+
+
+# --- context management ------------------------------------------------------------
+
+PASSAGES = (
+    '<search_results query="q"><result index="1" section="S" source_url="U">'
+    "LONG PASSAGE</result></search_results>"
+)
+
+
+def searched_turn():
+    return (tool_response(("search_knowledge_base", {"query": "q"})), text_response("A"))
+
+
+def tool_results(messages):
+    return [
+        block["content"]
+        for message in messages
+        if message["role"] == "user" and isinstance(message["content"], list)
+        for block in message["content"]
+    ]
+
+
+def test_earlier_turns_are_compacted_but_the_current_turn_is_complete():
+    client = FakeClient(*searched_turn(), *searched_turn())
+    agent = make_agent(client, FakeTool(ToolOutcome(PASSAGES)))
+
+    agent.ask("q1")
+    reply = agent.ask("q2")
+
+    # Last request of turn 2: turn 1's passages are compacted, turn 2's are not.
+    earlier, current = tool_results(client.requests[3]["messages"])
+    assert "LONG PASSAGE" not in earlier
+    assert current == PASSAGES
+    # The reply (traces, evaluation) keeps what the tools really returned.
+    assert tool_results(reply.messages) == [PASSAGES]
+
+
+def test_the_compacted_prefix_is_identical_from_one_turn_to_the_next():
+    client = FakeClient(*searched_turn(), *searched_turn(), text_response("C"))
+    agent = make_agent(client, FakeTool(ToolOutcome(PASSAGES)))
+
+    agent.ask("q1")
+    agent.ask("q2")
+    agent.ask("q3")
+
+    turn_one = 4  # question, tool call, tool result, answer
+    second, third = client.requests[2]["messages"], client.requests[4]["messages"]
+    assert third[:turn_one] == second[:turn_one]

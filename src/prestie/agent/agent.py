@@ -9,7 +9,9 @@ One question = one "turn", which may take several API requests:
 
 The API is stateless: every request resends the whole conversation (system
 prompt + tool definitions + history). Prompt caching makes that cheap: the
-unchanged prefix is read from cache at ~10% of the input price.
+unchanged prefix is read from cache at ~10% of the input price. Earlier turns
+are sent compacted (see `context.py`): their passages and character state are
+replaced by short stubs, so the history grows by little more than the answers.
 
 Every request is streamed: `ask_stream` yields the answer's text as Claude
 writes it and announces each tool call, so a UI can show progress instead of a
@@ -22,6 +24,7 @@ from typing import Any, Protocol
 
 import anthropic
 
+from prestie.agent.context import compact_history
 from prestie.agent.tools import ToolOutcome
 
 DEFAULT_MAX_TOKENS = 16000
@@ -161,8 +164,9 @@ class Agent:
         History is only updated when the turn completes cleanly. The last event
         is always TurnFinished; API failures raise AgentError mid-iteration.
         """
-        turn_start = len(self._history)
-        messages = (*self._history, {"role": "user", "content": question})
+        # The full history is kept; earlier turns are compacted when sent.
+        history = compact_history(self._history)
+        turn: tuple[dict[str, Any], ...] = ({"role": "user", "content": question},)
         tool_calls: tuple[ToolCall, ...] = ()
         usage = Usage()
         models: tuple[str, ...] = ()
@@ -170,7 +174,7 @@ class Agent:
 
         while True:
             response = yield from self._stream_request(
-                messages, allow_tools=tool_rounds < self._max_tool_rounds
+                (*history, *turn), allow_tools=tool_rounds < self._max_tool_rounds
             )
             usage = usage + Usage.from_api(response.usage)
             models = (*models, str(getattr(response, "model", self._model)))
@@ -181,14 +185,14 @@ class Agent:
                         tool_calls,
                         usage,
                         refused=True,
-                        messages=messages[turn_start:],
+                        messages=turn,
                         models=models,
                     )
                 )
                 return
 
             content = _echo_content(response.content)
-            messages = (*messages, {"role": "assistant", "content": content})
+            turn = (*turn, {"role": "assistant", "content": content})
             if response.stop_reason != "tool_use":
                 break
 
@@ -201,19 +205,19 @@ class Agent:
                 yield ToolCallStarted(call)
                 results.append(self._run_tool(block, call))
             # All results of one round go back in a single user message.
-            messages = (*messages, {"role": "user", "content": results})
+            turn = (*turn, {"role": "user", "content": results})
 
         truncated = response.stop_reason == "max_tokens"
         # A truncated tool_use without its tool_result would make the next request invalid.
         if not (truncated and _has_tool_use(content)):
-            self._history = messages
+            self._history = (*self._history, *turn)
         yield TurnFinished(
             AgentReply(
                 _text(response.content),
                 tool_calls,
                 usage,
                 truncated=truncated,
-                messages=messages[turn_start:],
+                messages=turn,
                 models=models,
             )
         )
