@@ -28,6 +28,8 @@ SPEC_KEYS = [spec.key for spec in COVERED_SPECS]
 CONTENT_TYPE_DESCRIPTIONS = {
     "beginner": "simplified 'easy mode' guide: basic rotation, beginner talents, "
     "basic stat priority",
+    "gear": "gems, enchants per slot and consumables (flasks, potions, food, "
+    "weapon oils)",
     "leveling": "leveling to 90: leveling rotation by level, heirlooms, "
     "leveling talents",
     "mechanics": "spell glossary: what every ability and talent does",

@@ -22,6 +22,7 @@ PVE_PAGES: tuple[tuple[str, str], ...] = (
     ("spell-summary", "mechanics"),
     ("easy-mode", "beginner"),
     ("mythic-plus-tips", "mythic_plus"),
+    ("gems-enchants-consumables", "gear"),
 )
 
 
