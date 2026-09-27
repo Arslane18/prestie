@@ -11,14 +11,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from prestie.catalog import SpecGuide, spec_by_id, specs_for_class
+from prestie.character.equipment import Equipment, equipment_from_snapshot
+from prestie.character.fields import CharacterStateError
+from prestie.character.fields import items as _items
+from prestie.character.fields import mapping as _mapping
+from prestie.character.fields import optional as _optional
+from prestie.character.fields import require as _require
 
 SAVED_VARIABLE = "PrestieDB"
 SUPPORTED_SCHEMA = 1
 NO_SPEC_ID = 0  # reported below level 10, before a specialization is chosen
-
-
-class CharacterStateError(ValueError):
-    """The exported data is missing or does not match the expected schema."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,9 @@ class CharacterState:
     active_quest: ActiveQuest | None
     quests: tuple[Quest, ...]
     captured_at: datetime
+    # None: not exported (addon older than the equipment export, or it failed).
+    equipment: Equipment | None = None
+    equipment_error: str | None = None  # the addon's error while reading it
 
     @property
     def guide(self) -> SpecGuide | None:
@@ -115,7 +120,13 @@ def _state(snap: Mapping[str, Any]) -> CharacterState:
         active_quest=_active_quest(_mapping(snap, "activeQuest")),
         quests=tuple(_quest(entry) for entry in _items(snap, "quests")),
         captured_at=datetime.fromtimestamp(_require(snap, "capturedAt", int), UTC),
+        equipment=_equipment(_mapping(snap, "equipment")),
+        equipment_error=_optional(snap, "equipmentError", str),
     )
+
+
+def _equipment(raw: Mapping[str, Any] | None) -> Equipment | None:
+    return None if raw is None else equipment_from_snapshot(raw)
 
 
 def _spec(spec: Mapping[str, Any] | None) -> Spec | None:
@@ -158,37 +169,3 @@ def _quest(entry: Any) -> Quest:
         level=_optional(entry, "level", int),
         complete=bool(entry.get("complete")),
     )
-
-
-def _require(data: Mapping[str, Any], key: str, kind: type) -> Any:
-    value = data.get(key)
-    # bool is a subclass of int: reject it where a number is expected.
-    if not isinstance(value, kind) or (kind is int and isinstance(value, bool)):
-        raise CharacterStateError(f"'{key}' must be a {kind.__name__}, got {value!r}")
-    return value
-
-
-def _optional(data: Mapping[str, Any], key: str, kind: type) -> Any:
-    return None if data.get(key) is None else _require(data, key, kind)
-
-
-def _mapping(
-    data: Mapping[str, Any], key: str, *, required: bool = False
-) -> Mapping[str, Any] | None:
-    value = data.get(key)
-    if value is None or value == []:  # an empty Lua table parses as []
-        if required:
-            raise CharacterStateError(f"'{key}' is missing")
-        return None
-    if not isinstance(value, Mapping):
-        raise CharacterStateError(f"'{key}' must be a table of fields, got {value!r}")
-    return value
-
-
-def _items(data: Mapping[str, Any], key: str) -> list[Any]:
-    value = data.get(key)
-    if value is None or value == {}:
-        return []
-    if not isinstance(value, list):
-        raise CharacterStateError(f"'{key}' must be a list, got {value!r}")
-    return value

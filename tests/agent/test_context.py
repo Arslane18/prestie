@@ -125,3 +125,12 @@ def test_compaction_is_deterministic_and_idempotent():
 
     assert compact_history(history) == once
     assert compact_history(once) == once
+
+
+def test_equipment_is_replaced_by_a_reminder_to_read_it_again():
+    output = "<equipment>\n- head: Heaume, item level 623\n</equipment>"
+
+    [compacted] = compacted_results(turn(("get_equipment", output)))
+
+    assert "Heaume" not in compacted["content"]
+    assert "get_equipment" in compacted["content"]

@@ -135,3 +135,15 @@ def test_addon_mode_asks_the_spec_when_the_state_is_unavailable():
 
     assert "ask which class and spec the player plays" in prompt
     assert "instead of answering for every covered spec" in prompt
+
+
+def test_addon_mode_prompt_explains_how_to_judge_gear():
+    prompt = build_system_prompt(None)
+
+    assert "get_equipment" in prompt
+    assert "stat priority" in prompt
+    assert "never make up stat weights" in prompt
+
+
+def test_manual_mode_prompt_does_not_mention_equipment():
+    assert "get_equipment" not in build_system_prompt(PlayerContext(level=80))

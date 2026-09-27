@@ -8,8 +8,9 @@ Before each new question, earlier turns are compacted:
 - search results (the largest part, ~5 passages each) keep only the query and
   the sections and URLs they came from; Claude searches again if it needs a
   passage's content;
-- the character state is dropped: it may have changed since (a /reload between
-  two questions), so Claude must read it again instead of trusting an old copy;
+- the character state and the equipment are dropped: they may have changed
+  since (a /reload between two questions), so Claude must read them again
+  instead of trusting an old copy;
 - everything else (questions, answers, tool calls, quest facts, errors) stays.
 
 The current turn is never compacted: Claude needs its fresh results. Compaction
@@ -23,6 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from prestie.agent.character_tool import CHARACTER_STATE_TOOL_NAME
+from prestie.agent.equipment_tool import EQUIPMENT_TOOL_NAME
 from prestie.agent.tools import SEARCH_TOOL_NAME
 
 Message = Mapping[str, Any]
@@ -91,13 +93,25 @@ def _compact_search(content: str) -> str:
     )
 
 
+COMPACTED_EQUIPMENT = (
+    "<equipment_removed>The equipment read in an earlier turn was removed: the "
+    "player may have changed gear since (then /reload). Call get_equipment "
+    "again for the current gear.</equipment_removed>"
+)
+
+
 def _compact_state(content: str) -> str:
     return COMPACTED_STATE
+
+
+def _compact_equipment(content: str) -> str:
+    return COMPACTED_EQUIPMENT
 
 
 COMPACTORS: Mapping[str, Callable[[str], str]] = {
     SEARCH_TOOL_NAME: _compact_search,
     CHARACTER_STATE_TOOL_NAME: _compact_state,
+    EQUIPMENT_TOOL_NAME: _compact_equipment,
 }
 
 

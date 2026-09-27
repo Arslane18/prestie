@@ -414,6 +414,7 @@ def test_addon_mode_agent_gets_search_character_and_quest_tools(tmp_path):
         "search_knowledge_base",
         "get_character_state",
         "get_quest_details",
+        "get_equipment",
     )
 
 

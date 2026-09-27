@@ -65,7 +65,7 @@ def format_state(state: CharacterState, now: datetime) -> str:
         f"Class: {state.class_name} ({state.class_token})",
         f"Specialization: {_spec(state)}",
         f"Hero talent: {state.hero_talent or 'none'}",
-        f"Knowledge base: {_coverage(state)}",
+        f"Knowledge base: {knowledge_base_coverage(state)}",
         *_tracked_quest(state),
         *_quest_log(state.quests),
         "</character_state>",
@@ -82,7 +82,7 @@ def _spec(state: CharacterState) -> str:
     return f"{state.spec.name or '?'} ({details})"
 
 
-def _coverage(state: CharacterState) -> str:
+def knowledge_base_coverage(state: CharacterState) -> str:
     if state.guide is not None:
         return f'covered, search with spec="{state.guide.key}"'
     if state.spec is None and state.class_guides:

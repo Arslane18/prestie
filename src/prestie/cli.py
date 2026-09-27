@@ -32,6 +32,7 @@ from prestie.agent.character_tool import (
     ProvidesCharacterState,
     format_state,
 )
+from prestie.agent.equipment_tool import EquipmentTool
 from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prompt
 from prestie.agent.quest_tool import QuestDetailsTool
 from prestie.agent.tool_labels import tool_call_label
@@ -190,7 +191,13 @@ def build_agent(
         source = character_source or SavedVariablesWatcher(
             settings.require_saved_variables_path()
         )
-        tools.extend([CharacterStateTool(source), build_quest_tool(settings)])
+        tools.extend(
+            [
+                CharacterStateTool(source),
+                build_quest_tool(settings),
+                EquipmentTool(source),
+            ]
+        )
     return Agent(
         client or build_anthropic_client(settings),
         model=settings.claude_model,
