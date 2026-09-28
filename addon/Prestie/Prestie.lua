@@ -11,17 +11,44 @@ local SCHEMA = 1
 
 local frame = CreateFrame("Frame")
 
--- 11.x moved the spec functions to C_SpecializationInfo; keep a fallback.
+-- Spec functions moved between the global API and C_SpecializationInfo across
+-- patches, and under Midnight one of them reported id 0 for a character that
+-- had picked a spec. Every known source is tried, keeping the first real id.
 local SpecInfo = C_SpecializationInfo or {}
-local GetSpecIndex = SpecInfo.GetSpecialization or GetSpecialization
-local GetSpecInfo = SpecInfo.GetSpecializationInfo or GetSpecializationInfo
+
+local function specIDFromIndex(getIndex, getInfo)
+  local index = getIndex and getIndex()
+  return index and getInfo and (getInfo(index)) -- first return value: the id
+end
+
+local SPEC_ID_SOURCES = {
+  function()
+    return PlayerUtil and PlayerUtil.GetCurrentSpecID and PlayerUtil.GetCurrentSpecID()
+  end,
+  function()
+    return specIDFromIndex(SpecInfo.GetSpecialization, SpecInfo.GetSpecializationInfo)
+  end,
+  function()
+    return specIDFromIndex(GetSpecialization, GetSpecializationInfo)
+  end,
+}
+
+local function currentSpecID()
+  for _, source in ipairs(SPEC_ID_SOURCES) do
+    local ok, id = pcall(source)
+    if ok and type(id) == "number" and id > 0 then
+      return id
+    end
+  end
+  return nil
+end
 
 local function readSpec()
-  local index = GetSpecIndex and GetSpecIndex()
-  if not index or not GetSpecInfo then
-    return nil
+  local specID = currentSpecID()
+  if not specID then
+    return nil -- no spec yet: the backend falls back to the class guides
   end
-  local specID, name, _, _, role = GetSpecInfo(index)
+  local _, name, _, _, role = GetSpecializationInfoByID(specID)
   return { id = specID, name = name, role = role }
 end
 
@@ -196,19 +223,35 @@ local function readEquipment()
   return { equipped = readEquipped(), bags = readBags(), stats = readStats() }
 end
 
-local function snapshot()
+-- On PLAYER_LOGOUT (also fired by /reload) the game is tearing the UI down and
+-- the spec and talent APIs no longer answer, yet that is the snapshot the file
+-- keeps. Keep the last value read while playing, for the same character only
+-- (SavedVariables are shared by every character of the account).
+local function keepOnLogout(event, fresh, field, character, realm)
+  local previous = PrestieDB.snapshot
+  if fresh ~= nil or event ~= "PLAYER_LOGOUT" or not previous then
+    return fresh
+  end
+  if previous.character ~= character or previous.realm ~= realm then
+    return fresh
+  end
+  return previous[field]
+end
+
+local function snapshot(event)
   local className, classFile = UnitClass("player")
+  local character, realm = UnitName("player"), GetRealmName()
   -- Gear reading uses many game APIs: a failure there must not lose the rest,
   -- and is reported to the backend instead of silently dropped.
   local gearOk, equipment = pcall(readEquipment)
   PrestieDB.snapshot = {
     capturedAt = time(),
-    character = UnitName("player"),
-    realm = GetRealmName(),
+    character = character,
+    realm = realm,
     level = UnitLevel("player"),
     class = { name = className, file = classFile },
-    spec = readSpec(),
-    heroTalent = readHeroTalent(),
+    spec = keepOnLogout(event, readSpec(), "spec", character, realm),
+    heroTalent = keepOnLogout(event, readHeroTalent(), "heroTalent", character, realm),
     activeQuest = readActiveQuest(),
     quests = readQuests(),
     equipment = gearOk and equipment or nil,
@@ -226,7 +269,7 @@ frame:SetScript("OnEvent", function(_, event, arg1)
     return
   end
   if PrestieDB then
-    snapshot()
+    snapshot(event)
   end
 end)
 

@@ -2,7 +2,7 @@
 ## Title: Prestie
 ## Notes: Exports your character (level, class, spec, quests, gear) for the Prestie companion app.
 ## Author: arslane18
-## Version: 0.2.1
+## Version: 0.2.3
 ## SavedVariables: PrestieDB
 
 Prestie.lua
