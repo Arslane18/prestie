@@ -1,7 +1,7 @@
 [project]
 name = "prestie"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI companion for World of Warcraft: RAG over class guides, a tool-using Claude agent that reads the in-game character, and a native overlay window"
 readme = "README.md"
 authors = [
     { name = "arslane18", email = "ami54500@gmail.com" }
