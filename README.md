@@ -4,6 +4,7 @@
 
 
 
+
 # Prestie
 
 **An AI companion for World of Warcraft: a Claude-powered agent that reads your character in-game, searches 360 class guides, and answers in a native overlay window next to the game.**
@@ -17,6 +18,8 @@ Prestie is a learning and portfolio project focused on **retrieval-augmented gen
 ---
 
 ▶️ **[Watch the demo video]([docs/Prestie_Demo.mp4](https://github.com/user-attachments/assets/11c3a530-f465-4865-b868-66551e2add57))**: the overlay window next to the game, reading the character and answering a question with cited sources.
+
+<img width="720" height="405" alt="Prestie_Demo" src="https://github.com/user-attachments/assets/cc271ab8-a23a-473f-8310-513778eb9c80" />
 
 ## What it does
 
