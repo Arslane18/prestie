@@ -35,3 +35,15 @@ def test_all_traces_are_read_back_oldest_day_first(tmp_path):
 
 def test_reading_an_empty_store_yields_nothing(tmp_path):
     assert list(JsonlTraceStore(tmp_path / "missing").read_all()) == []
+
+
+def test_a_damaged_line_is_skipped_and_counted(tmp_path):
+    store = JsonlTraceStore(tmp_path)
+    store.write(Trace(datetime(2026, 9, 29, tzinfo=UTC), "ok"))
+    with (tmp_path / "2026-09-29.jsonl").open("a") as handle:
+        handle.write('{"question": "cut in the mid\n')  # crash mid-write
+
+    loaded = store.load()
+
+    assert [t["question"] for t in loaded.traces] == ["ok"]
+    assert loaded.damaged_lines == 1

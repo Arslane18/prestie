@@ -9,7 +9,7 @@ import threading
 import uuid
 import time
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +86,12 @@ from prestie.knowledge.embeddings import Embedder, EmbeddingError, VoyageEmbedde
 from prestie.knowledge.filters import metadata_filter
 from prestie.knowledge.reranker import VoyageReranker
 from prestie.knowledge.retriever import Retriever
+from prestie.observability.metrics import (
+    DEFAULT_GAPS,
+    CorpusGap,
+    TraceSummary,
+    summarize_traces,
+)
 from prestie.observability.store import JsonlTraceStore
 from prestie.observability.trace import TurnRecorder
 from prestie.knowledge.rewriting import (
@@ -339,6 +345,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Open the native companion window (Windows, via WSL)",
     )
     serve.set_defaults(handler=_serve)
+
+    traces = commands.add_parser(
+        "traces", help="Summarize the recorded chat turns (cost, latency, gaps)"
+    )
+    period = traces.add_mutually_exclusive_group()
+    period.add_argument("--days", type=int, help="Only the last N days")
+    period.add_argument(
+        "--since", type=date.fromisoformat, help="Only from this day (YYYY-MM-DD)"
+    )
+    traces.add_argument(
+        "--gaps", type=int, default=DEFAULT_GAPS, help="Worst-covered searches shown"
+    )
+    traces.set_defaults(handler=_traces)
 
     watch = commands.add_parser(
         "watch", help="Print the character state each time the addon export changes"
@@ -648,6 +667,74 @@ def _stream_reply(events: Iterator[AgentEvent], *, verbose: bool) -> None:
             print("\n[autre modèle, la réponse reprend]", flush=True)
         elif isinstance(event, TurnFinished):
             print(_format_footer(event.reply, verbose=verbose))
+
+
+def _traces(args: argparse.Namespace) -> int:
+    loaded = JsonlTraceStore(load_settings().trace_dir).load()
+    since = (
+        date.today() - timedelta(days=args.days - 1) if args.days else args.since
+    )
+    summary = summarize_traces(loaded.traces, since=since, gaps=args.gaps)
+    if loaded.damaged_lines:
+        print(f"({loaded.damaged_lines} ligne(s) de trace abîmée(s) ignorée(s))")
+    print(format_trace_summary(summary))
+    return 0
+
+
+def format_trace_summary(summary: TraceSummary) -> str:
+    if not summary.turns:
+        return "Aucune trace sur cette période : utilise `prestie serve` ou `prestie chat`."
+    outcomes = ", ".join(f"{name} {count}" for name, count in summary.outcomes.items())
+    lines = [
+        f"{summary.turns} tours, {summary.sessions} session(s) ({outcomes})",
+        "",
+        f"Coût : {summary.cost_usd:.2f} $ au total, "
+        f"{_num(summary.cost_per_turn_usd, '.3f')} $ par tour"
+        + (
+            f" ({summary.unpriced_turns} tour(s) sans prix)"
+            if summary.unpriced_turns
+            else ""
+        ),
+        "  par jour : "
+        + " | ".join(
+            f"{day} {cost:.2f} $" for day, cost in summary.cost_per_day_usd.items()
+        ),
+        f"Cache : {_percent(summary.cache_read_share)} des tokens d'entrée lus "
+        "depuis le cache",
+        "",
+        f"Latence : tour p50 {_num(summary.duration_p50_s)} s / "
+        f"p95 {_num(summary.duration_p95_s)} s ; premier mot "
+        f"p50 {_num(summary.ttft_p50_s)} s / p95 {_num(summary.ttft_p95_s)} s",
+        f"  par tour en moyenne : requêtes {_num(summary.mean_request_s)} s, "
+        f"outils {_num(summary.mean_tool_s)} s, reste {_num(summary.mean_other_s)} s",
+        "",
+        f"Outils : {_num(summary.searches_per_turn)} recherche(s) par tour, "
+        f"{_percent(summary.alternative_query_share)} avec formulations "
+        f"alternatives, {summary.unfiltered_searches} sans filtre de spé, "
+        f"{summary.tool_errors} erreur(s)",
+        "  appels : "
+        + ", ".join(f"{name} {count}" for name, count in summary.tool_calls.items()),
+        "",
+        "Recherches les moins bien couvertes (distance du meilleur passage ; "
+        "plus haut = moins bien couvert) :",
+        *(_format_gap(gap) for gap in summary.corpus_gaps),
+    ]
+    return "\n".join(lines)
+
+
+def _format_gap(gap: CorpusGap) -> str:
+    distance = "aucun" if gap.best_distance is None else f"{gap.best_distance:.2f}"
+    queries = " | ".join(gap.queries)
+    question = _truncate(gap.question, EVAL_QUESTION_CHARS)
+    return f"  {distance:>6}  [{gap.spec or 'sans spé'}] {queries}  ← « {question} »"
+
+
+def _num(value: float | None, spec: str = ".1f") -> str:
+    return "–" if value is None else format(value, spec)
+
+
+def _percent(value: float | None) -> str:
+    return "–" if value is None else f"{value:.0%}"
 
 
 def _serve(args: argparse.Namespace) -> int:

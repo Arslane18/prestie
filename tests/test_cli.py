@@ -763,3 +763,35 @@ def test_chat_can_run_without_traces(fake_agent):
     cli.main(["chat", "--level", "80", "-q", "q", "--no-trace"])
 
     assert not fake_agent["trace_dir"].exists()
+
+
+def test_traces_report_summarizes_recorded_turns(tmp_path, monkeypatch, capsys):
+    from datetime import UTC, datetime
+
+    from prestie.agent.agent import AgentReply, RequestFinished, TurnFinished, Usage
+    from prestie.observability.store import JsonlTraceStore
+    from prestie.observability.trace import TurnRecorder
+
+    store = JsonlTraceStore(tmp_path / "traces")
+    recorder = TurnRecorder(store, session_id="s", now=lambda: datetime.now(UTC))
+    events = [
+        RequestFinished("claude-opus-5", Usage(input_tokens=1000), "end_turn", 2.0),
+        TurnFinished(AgentReply("ok")),
+    ]
+    list(recorder.observe("Quelle stat ?", iter(events)))
+    monkeypatch.setenv("PRESTIE_TRACE_DIR", str(tmp_path / "traces"))
+
+    assert cli.main(["traces", "--days", "7"]) == 0
+
+    out = capsys.readouterr().out
+    assert "1 tours" in out
+    assert "coût" in out.lower()
+    assert "Recherches les moins bien couvertes" in out
+
+
+def test_traces_report_without_traces_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("PRESTIE_TRACE_DIR", str(tmp_path / "none"))
+
+    assert cli.main(["traces"]) == 0
+
+    assert "Aucune trace" in capsys.readouterr().out
