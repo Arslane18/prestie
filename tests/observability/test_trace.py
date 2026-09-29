@@ -183,3 +183,21 @@ def test_trace_serializes_to_json():
     assert data["started_at"] == "2026-09-29T20:00:00+00:00"
     assert data["requests"][1]["usage"]["cache_read_input_tokens"] == 4000
     assert data["tools"][0]["details"]["results"][0]["distance"] == 0.31
+
+
+def test_the_caller_can_choose_the_trace_id():
+    sink = MemorySink()
+
+    list(recorder(sink).observe("q", answered_turn(), trace_id="chosen"))
+
+    assert sink.traces[0].trace_id == "chosen"
+
+
+def test_the_raw_character_snapshot_is_kept_for_replay():
+    sink = MemorySink()
+    raw = {"character": "Lumina", "level": 14, "class": {"file": "PRIEST"}}
+
+    list(recorder(sink, character_snapshot=lambda: raw).observe("q", answered_turn()))
+
+    assert sink.traces[0].character_snapshot == raw
+    assert sink.traces[0].to_json()["character_snapshot"] == raw

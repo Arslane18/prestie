@@ -181,3 +181,26 @@ def test_no_traces_gives_an_empty_summary():
     assert summary.cost_per_turn_usd is None
     assert summary.duration_p50_s is None
     assert summary.corpus_gaps == ()
+
+
+def test_flagged_turns_are_listed_with_their_signals():
+    clean = trace(question="ok")
+    broken = {**trace(question="ko", outcome="error"), "answer": ""}
+
+    summary = summarize_traces([clean, broken])
+
+    assert [(f.question, f.flags) for f in summary.flagged_turns] == [
+        ("ko", ("not_answered",))
+    ]
+
+
+def test_player_votes_are_counted_and_thumbs_down_are_flagged():
+    up, down = trace(question="bien"), trace(question="bof")
+    up["trace_id"], down["trace_id"] = "u", "d"
+
+    summary = summarize_traces([up, down], feedback={"u": "up", "d": "down"})
+
+    assert summary.feedback == {"up": 1, "down": 1}
+    assert [(f.question, f.flags) for f in summary.flagged_turns] == [
+        ("bof", ("thumbs_down",))
+    ]

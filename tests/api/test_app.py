@@ -467,3 +467,86 @@ def test_without_a_sink_nothing_is_traced(agents):
     response = client.post("/api/chat", json={"question": "q"}, headers=HEADERS)
 
     assert response.status_code == 200
+
+
+class FeedbackSink(MemorySink):
+    def __init__(self):
+        super().__init__()
+        self.votes = []
+
+    def write_feedback(self, trace_id, rating, at):
+        self.votes.append((trace_id, rating, at))
+
+
+def test_done_event_carries_the_trace_id_for_feedback(agents):
+    sink = FeedbackSink()
+    client = traced_client(agents, sink)
+
+    response = client.post("/api/chat", json={"question": "q"}, headers=HEADERS)
+
+    done = sse_events(response)[-1][1]
+    assert done["trace_id"] == sink.traces[0].trace_id
+
+
+def test_without_traces_the_done_event_has_no_trace_id(agents):
+    response = make_client(agents).post(
+        "/api/chat", json={"question": "q"}, headers=HEADERS
+    )
+
+    assert sse_events(response)[-1][1]["trace_id"] is None
+
+
+def test_feedback_is_recorded(agents):
+    sink = FeedbackSink()
+    client = traced_client(agents, sink)
+    trace_id = "a" * 32
+
+    response = client.post(
+        "/api/feedback", json={"trace_id": trace_id, "rating": "down"}, headers=HEADERS
+    )
+
+    assert response.status_code == 200
+    assert sink.votes == [(trace_id, "down", NOW)]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"trace_id": "a" * 32, "rating": "meh"},
+        {"trace_id": "not-an-id", "rating": "up"},
+        {"rating": "up"},
+    ],
+)
+def test_invalid_feedback_is_rejected(agents, body):
+    client = traced_client(agents, FeedbackSink())
+
+    assert client.post("/api/feedback", json=body, headers=HEADERS).status_code == 422
+
+
+def test_feedback_needs_the_client_header(agents):
+    client = traced_client(agents, FeedbackSink())
+
+    response = client.post("/api/feedback", json={"trace_id": "a" * 32, "rating": "up"})
+
+    assert response.status_code == 403
+
+
+def test_feedback_without_tracing_is_refused(agents):
+    response = make_client(agents).post(
+        "/api/feedback", json={"trace_id": "a" * 32, "rating": "up"}, headers=HEADERS
+    )
+
+    assert response.status_code == 409
+
+
+def test_traces_keep_the_character_in_the_addon_format(agents):
+    sink = MemorySink()
+
+    traced_client(agents, sink).post(
+        "/api/chat", json={"question": "q"}, headers=HEADERS
+    )
+
+    snapshot = sink.traces[0].character_snapshot
+    assert snapshot["class"] == {"name": "Prêtresse", "file": "PRIEST"}
+    assert snapshot["spec"]["id"] == 256
+    assert "capturedAt" not in snapshot

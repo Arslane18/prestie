@@ -787,6 +787,8 @@ def test_traces_report_summarizes_recorded_turns(tmp_path, monkeypatch, capsys):
     assert "1 tours" in out
     assert "coût" in out.lower()
     assert "Recherches les moins bien couvertes" in out
+    assert "Tours suspects (0) : aucun" in out
+    assert "Votes du joueur : 👍 0 · 👎 0" in out
 
 
 def test_traces_report_without_traces_says_so(tmp_path, monkeypatch, capsys):
@@ -795,3 +797,40 @@ def test_traces_report_without_traces_says_so(tmp_path, monkeypatch, capsys):
     assert cli.main(["traces"]) == 0
 
     assert "Aucune trace" in capsys.readouterr().out
+
+
+def test_promote_trace_appends_a_draft_case(tmp_path, monkeypatch, capsys):
+    from datetime import UTC, datetime
+
+    from prestie.agent.agent import AgentReply, TurnFinished
+    from prestie.observability.store import JsonlTraceStore
+    from prestie.observability.trace import TurnRecorder
+
+    store = JsonlTraceStore(tmp_path / "traces")
+    snapshot = {
+        "character": "Lumina",
+        "realm": "Khaz Modan",
+        "level": 90,
+        "class": {"name": "Prêtresse", "file": "PRIEST"},
+        "spec": {"id": 258, "name": "Ombre", "role": "DAMAGER"},
+    }
+    recorder = TurnRecorder(
+        store,
+        session_id="s",
+        character_snapshot=lambda: snapshot,
+        now=lambda: datetime(2026, 9, 29, 21, tzinfo=UTC),
+        new_id=lambda: "4f3a9c0e" + "0" * 24,
+    )
+    list(recorder.observe("Je peux prendre l'aggro ?", iter([TurnFinished(AgentReply("Non."))])))
+    monkeypatch.setenv("PRESTIE_TRACE_DIR", str(tmp_path / "traces"))
+    cases = tmp_path / "real.json"
+
+    assert cli.main(["promote-trace", "4f3a", "--cases", str(cases)]) == 0
+    assert cli.main(["promote-trace", "4f3a", "--cases", str(cases)]) == 1  # twice
+
+    [case] = json.loads(cases.read_text(encoding="utf-8"))
+    assert case["id"] == "real-20260929-4f3a9c0e"
+    assert case["expected_spec"] == "shadow-priest"
+    out, err = capsys.readouterr()
+    assert "real-20260929-4f3a9c0e" in out
+    assert "already" in err

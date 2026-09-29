@@ -47,3 +47,17 @@ def test_a_damaged_line_is_skipped_and_counted(tmp_path):
 
     assert [t["question"] for t in loaded.traces] == ["ok"]
     assert loaded.damaged_lines == 1
+
+
+def test_feedback_is_stored_apart_and_the_last_vote_wins(tmp_path):
+    store = JsonlTraceStore(tmp_path)
+    store.write(Trace(datetime(2026, 9, 29, tzinfo=UTC), "q"))
+    at = datetime(2026, 9, 29, 21, tzinfo=UTC)
+
+    store.write_feedback("t1", "down", at)
+    store.write_feedback("t1", "up", at)
+    store.write_feedback("t2", "down", at)
+
+    loaded = store.load()
+    assert [t["question"] for t in loaded.traces] == ["q"]  # votes are not traces
+    assert loaded.feedback == {"t1": "up", "t2": "down"}
