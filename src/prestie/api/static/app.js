@@ -274,8 +274,10 @@ async function ask(text) {
       body: JSON.stringify({ question: text }),
     });
     if (!response.ok) {
+      // The server answered (e.g. 409: a turn is still ending): say what it said.
       const body = await response.json().catch(() => null);
-      throw new Error(body?.error ?? `HTTP ${response.status}`);
+      turn.fail(body?.error ?? `Erreur du serveur Prestie (HTTP ${response.status}).`);
+      return;
     }
     const feed = createSseParser(handle);
     const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
@@ -305,7 +307,12 @@ async function resetConversation() {
     method: "POST",
     headers: API_HEADERS,
   }).catch(() => null);
-  if (response?.ok) showEmptyState();
+  if (response?.ok) {
+    showEmptyState();
+    return;
+  }
+  const body = await response?.json().catch(() => null);
+  createTurn().fail(body?.error ?? "Impossible de réinitialiser la conversation.");
 }
 
 function autoGrow() {

@@ -19,11 +19,19 @@ local Host headers are accepted, which blocks DNS rebinding.
 """
 
 import asyncio
+import json
 import logging
 import threading
 import uuid
 from pathlib import Path
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import (
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Sequence,
+)
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Protocol
@@ -31,7 +39,7 @@ from typing import Annotated, Any, Literal, Protocol
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StringConstraints
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -49,6 +57,7 @@ from prestie.agent.agent import (
     TurnFinished,
 )
 from prestie.agent.tool_labels import tool_call_label
+from prestie.api.streaming import ThreadedStream
 from prestie.character.snapshot import state_to_snapshot
 from prestie.character.state import CharacterState, CharacterStateError
 from prestie.observability.trace import TurnRecorder, WritesTraces
@@ -188,21 +197,22 @@ def create_app(
             },
         )
 
-    @app.post(
-        "/api/chat",
-        response_class=EventSourceResponse,
-        dependencies=[Depends(require_client_header)],
-    )
-    def chat(request: ChatRequest) -> Iterator[ServerSentEvent]:
-        # A sync generator: FastAPI iterates it in a worker thread, so the
-        # blocking Claude calls never stall the event loop.
+    @app.post("/api/chat", dependencies=[Depends(require_client_header)])
+    async def chat(request: ChatRequest) -> EventSourceResponse:
+        # Checked before the response starts, so a busy turn is a real 409.
         if not session.turn_lock.acquire(blocking=False):
-            yield _error_event(BUSY_MESSAGE)
-            return
+            raise HTTPException(status_code=409, detail=BUSY_MESSAGE)
         try:
-            yield from _chat_events(lambda: session.ask_stream(request.question))
-        finally:
+            # The blocking Claude calls run in a worker that owns the turn and
+            # releases the lock only once the turn is fully closed.
+            stream = ThreadedStream(
+                lambda: _chat_events(lambda: session.ask_stream(request.question)),
+                on_done=session.turn_lock.release,
+            )
+        except BaseException:
             session.turn_lock.release()
+            raise
+        return EventSourceResponse(_sse_bytes(stream))
 
     @app.post("/api/feedback", dependencies=[Depends(require_client_header)])
     def feedback(request: FeedbackRequest) -> dict[str, Any]:
@@ -264,6 +274,13 @@ def _chat_events(
     except Exception:  # noqa: BLE001 - logged here, never leaked to the page
         logger.exception("chat turn failed")
         yield _error_event(UNEXPECTED_ERROR_MESSAGE)
+
+
+async def _sse_bytes(events: AsyncIterable[ServerSentEvent]) -> AsyncIterator[bytes]:
+    async for event in events:
+        yield format_sse_event(
+            event=event.event, data_str=json.dumps(event.data, ensure_ascii=False)
+        )
 
 
 def _to_sse(event: AgentEvent, trace_id: str | None = None) -> ServerSentEvent:
