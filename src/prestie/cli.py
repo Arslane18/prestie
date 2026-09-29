@@ -39,7 +39,7 @@ from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prom
 from prestie.agent.quest_tool import QuestDetailsTool
 from prestie.agent.tool_labels import tool_call_label
 from prestie.agent.tools import KnowledgeBaseTool
-from prestie.api.app import character_summary, create_app
+from prestie.api.app import character_snapshot, character_summary, create_app
 from prestie.blizzard.client import GameDataClient, build_http_client
 from prestie.blizzard.quests import QuestCache, QuestRepository
 from prestie.character.state import CharacterStateError
@@ -89,8 +89,16 @@ from prestie.knowledge.retriever import Retriever
 from prestie.observability.metrics import (
     DEFAULT_GAPS,
     CorpusGap,
+    FlaggedTurn,
     TraceSummary,
     summarize_traces,
+)
+from prestie.observability.promote import (
+    DEFAULT_REAL_CASES,
+    PromoteError,
+    append_draft,
+    draft_case,
+    find_trace,
 )
 from prestie.observability.store import JsonlTraceStore
 from prestie.observability.trace import TurnRecorder
@@ -358,6 +366,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gaps", type=int, default=DEFAULT_GAPS, help="Worst-covered searches shown"
     )
     traces.set_defaults(handler=_traces)
+
+    promote = commands.add_parser(
+        "promote-trace", help="Turn a recorded question into a draft eval case"
+    )
+    promote.add_argument("trace_id", help="Trace id or its first characters")
+    promote.add_argument("--cases", type=Path, default=DEFAULT_REAL_CASES)
+    promote.set_defaults(handler=_promote_trace)
 
     watch = commands.add_parser(
         "watch", help="Print the character state each time the addon export changes"
@@ -652,6 +667,7 @@ def _chat_recorder(settings: Settings, player: PlayerContext | None) -> TurnReco
         store,
         session_id=uuid.uuid4().hex,
         character=lambda: character_summary(watcher, datetime.now(UTC)),
+        character_snapshot=lambda: character_snapshot(watcher),
     )
 
 
@@ -674,10 +690,27 @@ def _traces(args: argparse.Namespace) -> int:
     since = (
         date.today() - timedelta(days=args.days - 1) if args.days else args.since
     )
-    summary = summarize_traces(loaded.traces, since=since, gaps=args.gaps)
+    summary = summarize_traces(
+        loaded.traces, since=since, gaps=args.gaps, feedback=loaded.feedback
+    )
     if loaded.damaged_lines:
         print(f"({loaded.damaged_lines} ligne(s) de trace abîmée(s) ignorée(s))")
     print(format_trace_summary(summary))
+    return 0
+
+
+def _promote_trace(args: argparse.Namespace) -> int:
+    loaded = JsonlTraceStore(load_settings().trace_dir).load()
+    try:
+        case = draft_case(find_trace(loaded.traces, args.trace_id))
+        append_draft(args.cases, case)
+    except PromoteError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"{case['id']} ajouté à {args.cases} : complète judge_notes et les "
+        "attentes, puis lance eval-agent sur ce fichier."
+    )
     return 0
 
 
@@ -701,6 +734,8 @@ def format_trace_summary(summary: TraceSummary) -> str:
         ),
         f"Cache : {_percent(summary.cache_read_share)} des tokens d'entrée lus "
         "depuis le cache",
+        f"Votes du joueur : 👍 {summary.feedback.get('up', 0)} · "
+        f"👎 {summary.feedback.get('down', 0)}",
         "",
         f"Latence : tour p50 {_num(summary.duration_p50_s)} s / "
         f"p95 {_num(summary.duration_p95_s)} s ; premier mot "
@@ -718,8 +753,17 @@ def format_trace_summary(summary: TraceSummary) -> str:
         "Recherches les moins bien couvertes (distance du meilleur passage ; "
         "plus haut = moins bien couvert) :",
         *(_format_gap(gap) for gap in summary.corpus_gaps),
+        "",
+        f"Tours suspects ({len(summary.flagged_turns)}) :"
+        + ("" if summary.flagged_turns else " aucun"),
+        *(_format_flagged(turn) for turn in summary.flagged_turns),
     ]
     return "\n".join(lines)
+
+
+def _format_flagged(turn: FlaggedTurn) -> str:
+    question = _truncate(turn.question, EVAL_QUESTION_CHARS)
+    return f"  {turn.trace_id[:8]}  {', '.join(turn.flags)}  ← « {question} »"
 
 
 def _format_gap(gap: CorpusGap) -> str:

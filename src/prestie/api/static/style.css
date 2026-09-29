@@ -624,6 +624,39 @@ code {
   color: var(--warn);
 }
 
+/* the player's verdict on an answer: discreet until the answer is hovered */
+.feedback {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  opacity: 0.4;
+  transition: opacity 150ms;
+}
+
+.message.assistant:hover .feedback,
+.feedback:focus-within,
+.feedback:has(.chosen) {
+  opacity: 1;
+}
+
+.feedback-button {
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  filter: grayscale(1);
+}
+
+.feedback-button:hover,
+.feedback-button:focus-visible,
+.feedback-button.chosen {
+  filter: none;
+  border-color: var(--gold-line);
+}
+
 /* --- welcome: gossip options --- */
 .empty {
   display: grid;

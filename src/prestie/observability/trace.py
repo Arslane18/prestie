@@ -70,6 +70,8 @@ class TurnTrace:
     started_at: datetime
     question: str
     character: Mapping[str, Any] | None  # summary at question time
+    # The character in the addon's raw format, to replay the turn as an eval case.
+    character_snapshot: Mapping[str, Any] | None
     outcome: str
     error: str | None
     duration_s: float
@@ -93,6 +95,7 @@ class TurnRecorder:
         *,
         session_id: str,
         character: Callable[[], Mapping[str, Any] | None] = lambda: None,
+        character_snapshot: Callable[[], Mapping[str, Any] | None] = lambda: None,
         clock: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
         new_id: Callable[[], str] = lambda: uuid.uuid4().hex,
@@ -100,19 +103,27 @@ class TurnRecorder:
         self._sink = sink
         self.session_id = session_id
         self._character = character
+        self._character_snapshot = character_snapshot
         self._clock = clock
         self._now = now
         self._new_id = new_id
         self._turns = 0
 
     def observe(
-        self, question: str, events: Iterator[AgentEvent]
+        self,
+        question: str,
+        events: Iterator[AgentEvent],
+        trace_id: str | None = None,
     ) -> Iterator[AgentEvent]:
+        """Pass `events` through, then write the turn's trace. `trace_id` lets
+        the caller know the id upfront (e.g. to attach the player's vote)."""
+        trace_id = trace_id or self._new_id()
         self._turns += 1
         turn = _TurnState(
             started=self._clock(), started_at=self._now(), turn=self._turns
         )
         character = self._character()
+        snapshot = self._character_snapshot()
         try:
             for event in events:
                 turn = turn.record(event, self._clock())
@@ -125,10 +136,11 @@ class TurnRecorder:
             raise
         finally:
             trace = turn.trace(
-                trace_id=self._new_id(),
+                trace_id=trace_id,
                 session_id=self.session_id,
                 question=question,
                 character=character,
+                character_snapshot=snapshot,
                 ended=self._clock(),
             )
             self._write(trace)
@@ -190,6 +202,7 @@ class _TurnState:
         session_id: str,
         question: str,
         character: Mapping[str, Any] | None,
+        character_snapshot: Mapping[str, Any] | None,
         ended: float,
     ) -> TurnTrace:
         return TurnTrace(
@@ -199,6 +212,7 @@ class _TurnState:
             started_at=self.started_at,
             question=question,
             character=character,
+            character_snapshot=character_snapshot,
             outcome=self.outcome,
             error=self.error,
             duration_s=ended - self.started,

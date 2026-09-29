@@ -26,7 +26,7 @@ from pathlib import Path
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
-from typing import Annotated, Any, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -48,6 +48,7 @@ from prestie.agent.agent import (
     TurnFinished,
 )
 from prestie.agent.tool_labels import tool_call_label
+from prestie.character.snapshot import state_to_snapshot
 from prestie.character.state import CharacterState, CharacterStateError
 from prestie.observability.trace import TurnRecorder, WritesTraces
 
@@ -81,6 +82,20 @@ Question = Annotated[
 
 class ChatRequest(BaseModel):
     question: Question
+
+
+# Trace ids are uuid4 hex strings: nothing else reaches the votes file.
+TraceId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+TRACING_OFF_MESSAGE = "Les traces sont désactivées : pas de vote possible."
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: TraceId
+    rating: Literal["up", "down"]
+
+
+class RecordsTraces(WritesTraces, Protocol):
+    def write_feedback(self, trace_id: str, rating: str, at: datetime) -> None: ...
 
 
 class StreamsAnswers(Protocol):
@@ -121,11 +136,13 @@ class ChatSession:
             )
         return self._agent
 
-    def ask_stream(self, question: str) -> Iterator[AgentEvent]:
+    def ask_stream(self, question: str) -> tuple[str | None, Iterator[AgentEvent]]:
+        """The turn's trace id (None when not traced) and its events."""
         events = self.agent.ask_stream(question)
         if self._recorder is None:
-            return events
-        return self._recorder.observe(question, events)
+            return None, events
+        trace_id = uuid.uuid4().hex
+        return trace_id, self._recorder.observe(question, events, trace_id=trace_id)
 
     def reset(self) -> None:
         self._agent = None
@@ -138,7 +155,7 @@ def create_app(
     watcher_factory: Callable[[], WatchesCharacter],
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     allowed_hosts: Sequence[str] = DEFAULT_ALLOWED_HOSTS,
-    trace_sink: WritesTraces | None = None,
+    trace_sink: RecordsTraces | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Prestie", docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))
@@ -150,6 +167,7 @@ def create_app(
                 trace_sink,
                 session_id=uuid.uuid4().hex,
                 character=lambda: character_summary(watcher, now()),
+                character_snapshot=lambda: character_snapshot(watcher),
             )
         )
         if trace_sink is not None
@@ -180,9 +198,17 @@ def create_app(
             yield _error_event(BUSY_MESSAGE)
             return
         try:
-            yield from _chat_events(session.ask_stream(request.question))
+            trace_id, events = session.ask_stream(request.question)
+            yield from _chat_events(events, trace_id)
         finally:
             session.turn_lock.release()
+
+    @app.post("/api/feedback", dependencies=[Depends(require_client_header)])
+    def feedback(request: FeedbackRequest) -> dict[str, Any]:
+        if trace_sink is None:
+            raise HTTPException(status_code=409, detail=TRACING_OFF_MESSAGE)
+        trace_sink.write_feedback(request.trace_id, request.rating, now())
+        return _envelope(None)
 
     @app.post("/api/reset", dependencies=[Depends(require_client_header)])
     def reset() -> dict[str, Any]:
@@ -222,11 +248,13 @@ def require_client_header(
 TRACE_ONLY_EVENTS = (ToolCallFinished, RequestFinished)
 
 
-def _chat_events(events: Iterator[AgentEvent]) -> Iterator[ServerSentEvent]:
+def _chat_events(
+    events: Iterator[AgentEvent], trace_id: str | None = None
+) -> Iterator[ServerSentEvent]:
     try:
         for event in events:
             if not isinstance(event, TRACE_ONLY_EVENTS):
-                yield _to_sse(event)
+                yield _to_sse(event, trace_id)
     except AgentError as exc:
         yield _error_event(str(exc))
     except Exception:  # noqa: BLE001 - logged here, never leaked to the page
@@ -234,7 +262,7 @@ def _chat_events(events: Iterator[AgentEvent]) -> Iterator[ServerSentEvent]:
         yield _error_event(UNEXPECTED_ERROR_MESSAGE)
 
 
-def _to_sse(event: AgentEvent) -> ServerSentEvent:
+def _to_sse(event: AgentEvent, trace_id: str | None = None) -> ServerSentEvent:
     if isinstance(event, TextDelta):
         return ServerSentEvent(event="text", data={"text": event.text})
     if isinstance(event, ToolCallStarted):
@@ -245,12 +273,13 @@ def _to_sse(event: AgentEvent) -> ServerSentEvent:
     if isinstance(event, FallbackRestart):
         return ServerSentEvent(event="restart", data={})
     if isinstance(event, TurnFinished):
-        return ServerSentEvent(event="done", data=_reply_json(event.reply))
+        return ServerSentEvent(event="done", data=_reply_json(event.reply, trace_id))
     raise TypeError(f"unknown agent event: {event!r}")
 
 
-def _reply_json(reply: AgentReply) -> dict[str, Any]:
+def _reply_json(reply: AgentReply, trace_id: str | None = None) -> dict[str, Any]:
     return {
+        "trace_id": trace_id,  # lets the page attach the player's vote
         "text": reply.text,
         "refused": reply.refused,
         "truncated": reply.truncated,
@@ -298,6 +327,14 @@ def character_summary(
         "hero_talent": state.hero_talent,
         "age_minutes": age_seconds // SECONDS_PER_MINUTE,
     }
+
+
+def character_snapshot(watcher: WatchesCharacter) -> dict[str, Any] | None:
+    """The character in the addon's format, so a traced turn can be replayed."""
+    try:
+        return state_to_snapshot(watcher.latest())
+    except CharacterStateError:
+        return None
 
 
 async def character_updates(

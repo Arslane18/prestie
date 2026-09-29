@@ -18,8 +18,11 @@ from datetime import date, datetime
 from typing import Any
 
 from prestie.agent.tools import SEARCH_TOOL_NAME
+from prestie.observability.checks import online_flags
 
 DEFAULT_GAPS = 10
+THUMBS_DOWN = "thumbs_down"  # the player's own verdict, next to online checks
+DOWN = "down"
 CACHE_READ = "cache_read_input_tokens"
 INPUT_KEYS = ("input_tokens", CACHE_READ, "cache_creation_input_tokens")
 
@@ -32,6 +35,13 @@ class CorpusGap:
     queries: tuple[str, ...]
     spec: str | None
     best_distance: float | None  # None: the search returned no passage
+    trace_id: str
+
+
+@dataclass(frozen=True)
+class FlaggedTurn:
+    question: str
+    flags: tuple[str, ...]
     trace_id: str
 
 
@@ -59,6 +69,8 @@ class TraceSummary:
     tool_errors: int
     tool_calls: Mapping[str, int]
     corpus_gaps: tuple[CorpusGap, ...]
+    flagged_turns: tuple[FlaggedTurn, ...]
+    feedback: Mapping[str, int]  # vote -> number of voted turns
 
 
 def percentile(values: Sequence[float], rank: float) -> float | None:
@@ -71,8 +83,13 @@ def percentile(values: Sequence[float], rank: float) -> float | None:
 
 
 def summarize_traces(
-    traces: Iterable[Trace], *, since: date | None = None, gaps: int = DEFAULT_GAPS
+    traces: Iterable[Trace],
+    *,
+    since: date | None = None,
+    gaps: int = DEFAULT_GAPS,
+    feedback: Mapping[str, str] | None = None,
 ) -> TraceSummary:
+    votes = feedback or {}
     selected = [t for t in traces if since is None or _day(t) >= since]
     tools = [tool for t in selected for tool in t.get("tools", ())]
     searches = [tool for tool in tools if tool.get("name") == SEARCH_TOOL_NAME]
@@ -107,7 +124,20 @@ def summarize_traces(
         tool_errors=sum(1 for tool in tools if tool.get("is_error")),
         tool_calls=dict(Counter(tool.get("name") for tool in tools)),
         corpus_gaps=_worst_covered(selected, gaps),
+        flagged_turns=tuple(
+            FlaggedTurn(t.get("question", ""), flags, t.get("trace_id", ""))
+            for t in selected
+            if (flags := _flags(t, votes))
+        ),
+        feedback=dict(
+            Counter(votes[t["trace_id"]] for t in selected if t.get("trace_id") in votes)
+        ),
     )
+
+
+def _flags(trace: Trace, votes: Mapping[str, str]) -> tuple[str, ...]:
+    voted_down = votes.get(trace.get("trace_id", "")) == DOWN
+    return (*online_flags(trace), *((THUMBS_DOWN,) if voted_down else ()))
 
 
 def _day(trace: Trace) -> date:

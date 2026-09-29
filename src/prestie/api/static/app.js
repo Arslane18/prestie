@@ -171,6 +171,7 @@ function createTurn() {
       const count = list.children.length;
       summary.textContent = `${count} étape${count > 1 ? "s" : ""}`;
       if (reply.truncated) addNotice(message, "Réponse tronquée (limite de longueur).");
+      if (reply.trace_id) addFeedback(message, reply.trace_id);
       scrollToEnd();
     },
     fail(text) {
@@ -181,6 +182,49 @@ function createTurn() {
       scrollToEnd();
     },
   };
+}
+
+const FEEDBACK_CHOICES = [
+  ["up", "👍", "Réponse utile"],
+  ["down", "👎", "Réponse à revoir"],
+];
+
+/** Thumbs under an answer: the player's verdict joins the turn's trace. */
+function addFeedback(message, traceId) {
+  const row = document.createElement("div");
+  row.className = "feedback";
+  const buttons = FEEDBACK_CHOICES.map(([rating, symbol, label]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "feedback-button";
+    button.textContent = symbol;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () =>
+      sendFeedback(traceId, rating, button, buttons),
+    );
+    return button;
+  });
+  row.append(...buttons);
+  message.append(row);
+}
+
+async function sendFeedback(traceId, rating, chosen, buttons) {
+  // A later vote replaces the earlier one, so the player can change their mind.
+  const response = await fetch("/api/feedback", {
+    method: "POST",
+    headers: API_HEADERS,
+    body: JSON.stringify({ trace_id: traceId, rating }),
+  }).catch(() => null);
+  if (!response?.ok) {
+    chosen.title = "Vote non enregistré (serveur injoignable)";
+    return;
+  }
+  for (const button of buttons) {
+    button.classList.toggle("chosen", button === chosen);
+    button.setAttribute("aria-pressed", String(button === chosen));
+  }
 }
 
 function addNotice(message, text) {

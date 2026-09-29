@@ -7,12 +7,17 @@ hold the player's questions and stay on their machine.
 
 import json
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 DEFAULT_TRACE_DIR = Path("data/traces")
 TRACE_FILE_SUFFIX = ".jsonl"
+# Daily trace files are named by date; votes live apart so that trace files
+# are only ever appended to, never rewritten.
+TRACE_FILE_PATTERN = f"[0-9]*{TRACE_FILE_SUFFIX}"
+FEEDBACK_FILE = "feedback.jsonl"
 
 
 class Serializable(Protocol):
@@ -40,7 +45,7 @@ class JsonlTraceStore:
         traces: list[dict[str, Any]] = []
         damaged = 0
         if self._directory.exists():
-            for path in sorted(self._directory.glob(f"*{TRACE_FILE_SUFFIX}")):
+            for path in sorted(self._directory.glob(TRACE_FILE_PATTERN)):
                 for line in path.read_text(encoding="utf-8").splitlines():
                     if not line.strip():
                         continue
@@ -48,7 +53,27 @@ class JsonlTraceStore:
                         traces.append(json.loads(line))
                     except json.JSONDecodeError:
                         damaged += 1
-        return LoadedTraces(tuple(traces), damaged)
+        return LoadedTraces(tuple(traces), damaged, self._feedback())
+
+    def write_feedback(self, trace_id: str, rating: str, at: datetime) -> None:
+        self._directory.mkdir(parents=True, exist_ok=True)
+        vote = {"trace_id": trace_id, "rating": rating, "at": at.isoformat()}
+        with (self._directory / FEEDBACK_FILE).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(vote) + "\n")
+
+    def _feedback(self) -> dict[str, str]:
+        """The player's vote per trace; a later vote replaces an earlier one."""
+        path = self._directory / FEEDBACK_FILE
+        if not path.exists():
+            return {}
+        votes: dict[str, str] = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                vote = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # a cut line: the vote is lost, the report is not
+            votes = {**votes, vote["trace_id"]: vote["rating"]}
+        return votes
 
     def read_all(self) -> Iterator[dict[str, Any]]:
         yield from self.load().traces
@@ -58,3 +83,4 @@ class JsonlTraceStore:
 class LoadedTraces:
     traces: tuple[dict[str, Any], ...]
     damaged_lines: int
+    feedback: Mapping[str, str] = field(default_factory=dict)  # trace id -> vote
