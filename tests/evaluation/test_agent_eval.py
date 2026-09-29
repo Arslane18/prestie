@@ -24,6 +24,7 @@ from prestie.evaluation.retrieval import EvalCaseError
 SHIPPED_CASES = Path(__file__).parents[2] / "evals" / "agent_cases.json"
 BASE = "https://www.icy-veins.com/wow"
 MODEL = "claude-opus-5"
+HARNESS_SHA = "approved-sha"
 STAT_URL = (
     f"{BASE}/blood-death-knight-pve-tank-stat-priority#wowsanlaynht-stat-priority"
 )
@@ -423,6 +424,7 @@ def run(tmp_path, outcome, cases=None, reps=1, judge=None):
         reps=reps,
         workers=2,
         expected_model=MODEL,
+        harness_sha=HARNESS_SHA,
     )
 
 
@@ -512,15 +514,19 @@ def test_resume_skips_completed_attempts(tmp_path):
     assert sorted(r["rep"] for r in rows(tmp_path)) == [0, 1]
 
 
-def test_truncated_answer_is_recorded_but_not_graded(tmp_path):
+def test_truncated_answer_counts_as_a_failure_without_calling_the_judge(tmp_path):
     judge = FakeJudge()
 
-    run(tmp_path, reply(truncated=True), judge=judge)
+    summary = run(tmp_path, reply(truncated=True), judge=judge)
 
     [row] = rows(tmp_path)
-    assert row["status"] == "truncated"
-    assert row["grade"] == {}
+    assert row["status"] == "ok"  # graded: the report and the summary count it
+    assert row["stop_reason"] == "max_tokens"
+    assert row["grade"] == {"pass": 0.0}
+    assert row["explanation"] == {"pass": "truncated"}
     assert judge.calls == 0
+    assert summary.pass_rate == 0.0
+    assert summary.truncated == 1
 
 
 def test_serving_errors_go_to_the_sidecar_not_the_results(tmp_path):

@@ -305,9 +305,34 @@ def test_eval_agent_pilot_on_selected_cases(agent_eval_env, capsys):
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "2 attempts run, 0 errors" in out
+    assert "graded 2/2 attempts, 0 truncated" in out
     assert "pass = 1.00" in out
     assert (agent_eval_env / "baseline" / "results.jsonl").exists()
     assert (agent_eval_env / "_state.json").exists()
+
+
+def test_eval_agent_gives_no_verdict_when_a_case_was_never_graded(
+    agent_eval_env, monkeypatch, capsys
+):
+    from prestie.evaluation.agent_judge import JudgeError
+
+    class BrokenJudge:
+        model = "claude-sonnet-5"
+
+        def __init__(self, client, model):
+            pass
+
+        def grade(self, case, answer, tool_outputs, prior_exchanges=()):
+            raise JudgeError("Judge stopped with stop_reason=max_tokens")
+
+    monkeypatch.setattr(cli, "Judge", BrokenJudge)
+    args = ["eval-agent", "--flow-dir", str(agent_eval_env), "--only", "thanks"]
+
+    assert cli.main([*args, "--reps", "1", "--approve-harness"]) == 0
+
+    out = capsys.readouterr().out
+    assert "no graded answers" in out
+    assert "graded 0/1 attempts" in out
 
 
 def test_eval_agent_rejects_unknown_case_ids(agent_eval_env, capsys):
@@ -661,6 +686,40 @@ def test_judge_retrieval_pools_every_system_and_records_verdicts(
     assert entry["judged_relevant"] == judged[0][:1]
     assert entry["judge_model"] == "claude-sonnet-5"
     assert "1 relevant" in capsys.readouterr().out
+
+
+def test_judge_retrieval_keeps_the_verdicts_paid_before_a_crash(
+    knowledge_env, tmp_path, monkeypatch
+):
+    from prestie.evaluation.relevance import Judgment
+    from prestie.knowledge.embeddings import EmbeddingError
+
+    cli.main(["ingest", "--cache-dir", str(knowledge_env)])
+    cases = tmp_path / "cases.json"
+    entry = {"question": "stats", "expected": [], "spec": "shadow-priest"}
+    cases.write_text(json.dumps([entry, {**entry, "question": "rotation"}]))
+
+    class CrashingJudge:
+        model = "claude-sonnet-5"
+
+        def __init__(self, client, model):
+            pass
+
+        def judge(self, case, passages):
+            if case.question == "rotation":
+                raise EmbeddingError("Voyage is down")
+            return tuple(Judgment(p.key, "answers", "ok") for p in passages)
+
+    monkeypatch.setattr(cli, "RelevanceJudge", CrashingJudge)
+    monkeypatch.setattr(cli, "build_eval_client", lambda settings: object())
+    monkeypatch.setattr(cli, "build_reranker", lambda settings, model: None)
+    monkeypatch.setattr(cli, "build_query_writer", lambda s, m: StatsWriter())
+
+    assert cli.main(["judge-retrieval", "--cases", str(cases), "--depth", "2"]) == 1
+
+    first, second = json.loads(cases.read_text(encoding="utf-8"))
+    assert first["judged_relevant"], "the first case's verdicts were lost"
+    assert "judged_relevant" not in second
 
 
 def test_eval_can_rerank_the_candidates(knowledge_env, tmp_path, monkeypatch, capsys):

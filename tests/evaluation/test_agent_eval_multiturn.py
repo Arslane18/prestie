@@ -13,6 +13,7 @@ from prestie.evaluation.agent_runner import run_agent_eval
 from prestie.evaluation.retrieval import EvalCaseError
 from tests.evaluation.test_agent_eval import (
     ANSWER,
+    HARNESS_SHA,
     MODEL,
     SHIPPED_CASES,
     SNAPSHOT,
@@ -184,6 +185,7 @@ def run_turns(tmp_path, cases, agents, judge=None):
         reps=1,
         workers=1,
         expected_model=MODEL,
+        harness_sha=HARNESS_SHA,
     )
 
 
@@ -248,7 +250,7 @@ def test_search_expectations_apply_to_the_graded_turn_only(tmp_path):
     assert row["grade"]["search_ok"] == 0.0
 
 
-def test_judge_sees_earlier_exchanges_and_every_turn_passages(tmp_path):
+def test_judge_sees_earlier_exchanges_and_earlier_passages_as_compacted(tmp_path):
     seen = {}
 
     class RecordingJudge(FakeJudge):
@@ -267,7 +269,11 @@ def test_judge_sees_earlier_exchanges_and_every_turn_passages(tmp_path):
         judge=RecordingJudge(),
     )
 
-    assert seen["outputs"] == [passages(STAT_URL)]
+    # The agent no longer had the first turn's passage text, only its source.
+    [earlier] = seen["outputs"]
+    assert STAT_URL in earlier
+    assert passages(STAT_URL) != earlier
+    assert "Search again" in earlier
     assert [(e.question, e.answer) for e in seen["exchanges"]] == [
         ("Quelle stat ?", "Hâte.")
     ]

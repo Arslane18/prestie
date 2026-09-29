@@ -3,6 +3,7 @@ import json
 import pytest
 
 from prestie.evaluation.agent_cases import load_agent_cases
+from prestie.evaluation.retrieval import EvalCaseError
 from prestie.observability.promote import PromoteError, draft_case, find_trace
 
 SNAPSHOT = {
@@ -63,16 +64,33 @@ def test_a_draft_case_replays_the_question_with_the_character_of_the_time():
     assert case["expected_spec"] == "shadow-priest"
     assert case["tags"] == ["addon", "real", "draft"]
     assert "TODO" in case["judge_notes"]
-    assert "Non, utilise Fade." in case["judge_notes"]  # the answer given then
+    # The answer given then is kept for the author, out of the judge's sight.
+    assert "Non, utilise Fade." not in case["judge_notes"]
+    assert case["previous_answer"] == "Non, utilise Fade."
 
 
-def test_the_draft_is_a_valid_eval_case(tmp_path):
+def test_an_unfinished_draft_cannot_be_run(tmp_path):
     path = tmp_path / "cases.json"
     path.write_text(json.dumps([draft_case(trace())]), encoding="utf-8")
+
+    with pytest.raises(EvalCaseError, match="draft"):
+        load_agent_cases(path)
+
+
+def test_a_finished_draft_is_a_valid_eval_case(tmp_path):
+    draft = draft_case(trace())
+    finished = {
+        **draft,
+        "tags": ["addon", "real"],
+        "judge_notes": "Shadow: Fade drops threat; the guide covers it.",
+    }
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps([finished]), encoding="utf-8")
 
     [case] = load_agent_cases(path)
 
     assert case.addon_mode and case.character.spec.name == "Ombre"
+    assert "Non, utilise Fade." not in case.judge_notes
 
 
 def test_manual_mode_traces_become_manual_cases():
