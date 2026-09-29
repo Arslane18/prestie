@@ -17,11 +17,17 @@ of `"question"`. Every turn is asked to the same agent, so the graded last
 question sees the real history (earlier answers and tool results); the
 expectations apply to that last turn only. In addon mode, a turn may carry a
 `"character"`: the state served from that turn on, as after a /reload.
+
+A case promoted from a real trace starts as a draft (tag `draft`, TODO in its
+`judge_notes`, the answer given at the time in `previous_answer`, a field the
+judge never sees). Drafts are refused: the judge treats `judge_notes` as ground
+truth, so the author must write them first.
 """
 
+import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,6 +52,9 @@ ADDON_ONLY_KEYS = (
 )
 UNAVAILABLE_STATE_MESSAGE = "Prestie.lua not found: install the addon, then /reload"
 TURN_KEYS = frozenset({"question", "character"})
+DRAFT_TAG = "draft"
+DRAFT_MARKER = "TODO"
+DIGEST_CHARS = 16
 
 
 @dataclass(frozen=True)
@@ -133,6 +142,16 @@ class TurnCharacterSource:
         return state
 
 
+def case_digest(case: AgentCase) -> str:
+    """A short hash of everything the case defines: it changes when the case does.
+
+    A result row stores it, so resuming a run after a case was edited grades
+    that case again instead of keeping a verdict on the old version.
+    """
+    canonical = json.dumps(asdict(case), sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:DIGEST_CHARS]
+
+
 def load_agent_cases(path: Path) -> tuple[AgentCase, ...]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -154,6 +173,7 @@ def _parse(entry: Any, where: str) -> AgentCase:
     _require_text(entry, "id", where)
     if "player" in entry and "character" in entry:
         raise EvalCaseError(f"{where}: give either 'player' or 'character', not both")
+    _refuse_draft(entry, where)
     turns = _turns(entry, where)
     case = AgentCase(
         id=entry["id"],
@@ -175,6 +195,18 @@ def _parse(entry: Any, where: str) -> AgentCase:
         raise EvalCaseError(f"{where}: a turn 'character' needs addon mode")
     prior = tuple(Turn(turn["question"]) for turn in turns[:-1])
     return replace(_with_player(case, entry, where), prior_turns=prior)
+
+
+def _refuse_draft(entry: dict[str, Any], where: str) -> None:
+    tags = entry.get("tags", [])
+    is_draft = (isinstance(tags, list) and DRAFT_TAG in tags) or (
+        DRAFT_MARKER in str(entry.get("judge_notes", ""))
+    )
+    if is_draft:
+        raise EvalCaseError(
+            f"{where} ({entry['id']}): draft case: write its judge_notes "
+            f"(no {DRAFT_MARKER}) and remove the '{DRAFT_TAG}' tag first"
+        )
 
 
 def _turns(entry: dict[str, Any], where: str) -> list[dict[str, Any]]:

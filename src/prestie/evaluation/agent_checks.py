@@ -18,7 +18,9 @@ from prestie.agent.tools import SEARCH_TOOL_NAME
 from prestie.evaluation.agent_cases import AgentCase
 
 SOURCES_HEADING = "sources (contenu copié d'icy veins)"
-CITED_URL = re.compile(r"https?://www\.icy-veins\.com/wow/[^\s)\]>\"'`<]+")
+# Any link counts as a citation, whatever its domain: an invented Wowhead link
+# is as wrong as an invented Icy Veins one (the agent only retrieves Icy Veins).
+CITED_URL = re.compile(r"https?://[^\s)\]>\"'`<]+")
 RETRIEVED_URL = re.compile(r'source_url="([^"]*)"')
 TRAILING_PUNCTUATION = ".,;:!?"
 WOW_PATH_MARKER = "/wow/"

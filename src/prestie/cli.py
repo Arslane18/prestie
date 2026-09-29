@@ -544,7 +544,6 @@ def _judge_retrieval(args: argparse.Namespace) -> int:
             for _, model, spec_filter, rewrite in JUDGE_POOL_SYSTEMS
         ]
         judge = RelevanceJudge(build_eval_client(settings), model=args.judge_model)
-        judgments = {}
         for index, case in enumerate(cases):
             try:
                 hit_lists = [
@@ -556,11 +555,13 @@ def _judge_retrieval(args: argparse.Namespace) -> int:
                     for retriever, spec_filter in systems
                 ]
                 passages = pool_passages(case, hit_lists, depth=args.depth)
-                judgments[index] = judge.judge(case, passages)
+                judgments = judge.judge(case, passages)
             except (RelevanceJudgeError, QueryRewriteError) as exc:
                 print(f"error on {case.question[:50]!r}: {exc}", file=sys.stderr)
                 continue
-            relevant = sum(j.relevant for j in judgments[index])
+            # Written after each case: a crash later keeps what was paid for.
+            record_judgments(args.cases, {index: judgments}, judge_model=judge.model)
+            relevant = sum(j.relevant for j in judgments)
             print(
                 f"{len(passages):2} judged, {relevant} relevant  "
                 f"{_truncate(case.question, EVAL_QUESTION_CHARS)}"
@@ -568,7 +569,6 @@ def _judge_retrieval(args: argparse.Namespace) -> int:
     except KNOWLEDGE_ERRORS as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    record_judgments(args.cases, judgments, judge_model=judge.model)
     return 0
 
 
@@ -866,7 +866,9 @@ def _eval_agent(args: argparse.Namespace) -> int:
     try:
         cases = _select_cases(load_agent_cases(args.cases), args.only)
         state_path = ensure_state(args.flow_dir)
-        check_harness(state_path, HARNESS_PATHS, approve=args.approve_harness)
+        harness_sha = check_harness(
+            state_path, HARNESS_PATHS, approve=args.approve_harness
+        )
         settings = load_settings()
         client = build_eval_client(settings)
         retriever = open_retriever(settings)
@@ -885,6 +887,7 @@ def _eval_agent(args: argparse.Namespace) -> int:
             reps=args.reps,
             workers=args.workers,
             expected_model=settings.claude_model,
+            harness_sha=harness_sha,
         )
     except (HarnessChangedError, *KNOWLEDGE_ERRORS) as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -922,6 +925,13 @@ def _format_eval_summary(
 ) -> str:
     if summary.pass_rate is None:
         headline = "no graded answers"
+    elif not summary.complete:
+        headline = (
+            f"INCOMPLETE, no verdict: no graded answer for "
+            f"{', '.join(summary.ungraded_cases)} (see errors.jsonl; re-run to "
+            f"resume). Partial pass = {summary.pass_rate:.2f} over "
+            f"{summary.cases} cases"
+        )
     else:
         ci = (
             f" ± {summary.ci_half_width:.2f}"
@@ -938,6 +948,10 @@ def _format_eval_summary(
     return "\n".join(
         [
             f"{summary.attempts_run} attempts run, {summary.errors} errors (see errors.jsonl)",
+            (
+                f"graded {summary.graded_attempts}/{summary.expected_attempts} "
+                f"attempts, {summary.truncated} truncated (counted as failures)"
+            ),
             headline,
             metrics,
             f"measured cost of all rows: ${cost:.2f}",

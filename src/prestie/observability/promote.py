@@ -4,7 +4,9 @@ The eval so far holds questions its author imagined; real players ask others,
 in other words. A promoted trace keeps the player's exact question and the
 character as exported at that moment (addon format), so the case replays the
 same situation. What a good answer must contain is left to the author: the
-draft carries a TODO and the answer given at the time, as a starting point.
+draft carries a TODO, and the answer given at the time sits in
+`previous_answer`, a starting point the judge never sees (it treats
+`judge_notes` as ground truth). The eval refuses drafts until they are written.
 """
 
 import json
@@ -39,10 +41,9 @@ def draft_case(trace: Mapping[str, Any]) -> dict[str, Any]:
         "question": trace["question"],
         "answerable": True,
         "expected_sources": [],
-        "judge_notes": (
-            "TODO: what a good answer must contain, from the guides. "
-            f"Answer given on {started:%Y-%m-%d}: {trace.get('answer', '')}"
-        ),
+        "judge_notes": "TODO: what a good answer must contain, from the guides.",
+        "previous_answer": trace.get("answer", ""),
+        "asked_on": f"{started:%Y-%m-%d}",
     }
     snapshot = trace.get("character_snapshot")
     if snapshot:

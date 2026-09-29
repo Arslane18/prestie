@@ -3,15 +3,24 @@ the results in the layout the eval report builder reads:
 
     <flow>/_state.json                  metric definitions, prices, harness sha
     <flow>/<variant>/results.jsonl      one graded row per (case, rep)
+    <flow>/<variant>/results.stale.jsonl rows graded by an older harness or case
     <flow>/<variant>/errors.jsonl       attempts that produced nothing gradable
     <flow>/<variant>/traces/<id>_rep<k>.json   full transcript per attempt
 
 Rows are written as attempts finish, and (case, rep) pairs already present in
 results.jsonl are skipped, so a crashed or interrupted run can simply resume.
+Each row records the harness and the case version that graded it: a resumed
+run only keeps rows graded by the current ones (the others are moved to
+results.stale.jsonl and graded again), so a variant never mixes two graders.
+
+A truncated answer is a failure. An attempt that could not be graded (serving
+or judge error) is not scored, but a case left with no graded rep makes the
+run incomplete: its pass rate is not a verdict.
 
 A multi-turn case asks every question to the same agent and grades the last
-answer: tool calls are checked on that turn, but passages retrieved in earlier
-turns count as sources (they are still in the agent's context).
+answer: tool calls are checked on that turn. Earlier tool results are given to
+the checks and the judge as the agent had them when answering, compacted
+(sources and URLs of earlier searches still count as retrieved).
 """
 
 import hashlib
@@ -26,9 +35,14 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from prestie.agent.agent import AgentError, AgentReply, ToolCall, Usage
+from prestie.agent.context import compact_history
 from prestie.agent.prompts import build_system_prompt
-from prestie.evaluation.agent_cases import AgentCase, TurnCharacterSource
 from prestie.agent.tools import SEARCH_TOOL_NAME
+from prestie.evaluation.agent_cases import (
+    AgentCase,
+    TurnCharacterSource,
+    case_digest,
+)
 from prestie.evaluation.agent_checks import (
     GATING_CHECKS,
     answer_lines,
@@ -42,20 +56,18 @@ from prestie.evaluation.agent_judge import (
     JudgeError,
     JudgeVerdict,
 )
+from prestie.pricing import PRICES, usage_cost_usd
 
 RESULTS_FILE = "results.jsonl"
 ERRORS_FILE = "errors.jsonl"
+STALE_RESULTS_FILE = "results.stale.jsonl"
 TRACES_DIR = "traces"
 STATE_FILE = "_state.json"
 CI_Z = 1.96  # 95% normal-approximation interval
 # Reported but never gating: they tell a retrieval failure apart from a
 # writing failure (an unanswerable case is expected to have invalid context).
 DIAGNOSTIC_METRICS = ("retrieved", CONTEXT_METRIC)
-# USD per million tokens (input, output); cache writes 1.25x input, reads 0.1x.
-PRICES = {
-    "claude-opus-5": {"in": 5.0, "out": 25.0},
-    "claude-sonnet-5": {"in": 2.0, "out": 10.0},
-}
+TRUNCATED_STOP_REASON = "max_tokens"
 
 
 class HarnessChangedError(Exception):
@@ -88,6 +100,14 @@ class RunSummary:
     pass_rate: float | None
     ci_half_width: float | None
     metric_means: Mapping[str, float]
+    graded_attempts: int
+    expected_attempts: int
+    truncated: int
+    ungraded_cases: tuple[str, ...]  # no graded rep: the pass rate is no verdict
+
+    @property
+    def complete(self) -> bool:
+        return not self.ungraded_cases
 
 
 @dataclass(frozen=True)
@@ -116,19 +136,33 @@ def run_agent_eval(
     reps: int,
     workers: int,
     expected_model: str,
+    harness_sha: str,
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> RunSummary:
+    cases = tuple(cases)
     (variant_dir / TRACES_DIR).mkdir(parents=True, exist_ok=True)
     results_path = variant_dir / RESULTS_FILE
-    done = {(row["prompt_id"], row["rep"]) for row in read_jsonl(results_path)}
+    versions = {
+        c.id: {"harness_sha": harness_sha, "case_sha": case_digest(c)} for c in cases
+    }
+    kept = _keep_current_rows(variant_dir, versions, harness_sha)
+    done = {(row["prompt_id"], row["rep"]) for row in kept}
     todo = [(c, rep) for c in cases for rep in range(reps) if (c.id, rep) not in done]
 
     errors = 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [
             pool.submit(
-                _run_attempt, c, rep, agent_factory, judge, expected_model, clock, now
+                _run_attempt,
+                c,
+                rep,
+                agent_factory,
+                judge,
+                expected_model,
+                versions[c.id],
+                clock,
+                now,
             )
             for c, rep in todo
         ]
@@ -148,7 +182,37 @@ def run_agent_eval(
                 encoding="utf-8",
             )
             _append(results_path, row)
-    return summarize(read_jsonl(results_path), attempts_run=len(todo), errors=errors)
+    return summarize(
+        read_jsonl(results_path),
+        case_ids=tuple(c.id for c in cases),
+        reps=reps,
+        attempts_run=len(todo),
+        errors=errors,
+    )
+
+
+def _keep_current_rows(
+    variant_dir: Path, versions: Mapping[str, Mapping[str, str]], harness_sha: str
+) -> list[dict[str, Any]]:
+    """Move rows graded by another harness or case version out of results.jsonl.
+
+    Rows of cases not selected in this run are kept if the harness matches:
+    their case version cannot be checked without the case.
+    """
+    results_path = variant_dir / RESULTS_FILE
+    rows = read_jsonl(results_path)
+
+    def current(row: Mapping[str, Any]) -> bool:
+        expected = versions.get(row["prompt_id"], {"harness_sha": harness_sha})
+        return all(row.get(key) == value for key, value in expected.items())
+
+    kept = [row for row in rows if current(row)]
+    stale = [row for row in rows if not current(row)]
+    if stale:
+        for row in stale:
+            _append(variant_dir / STALE_RESULTS_FILE, row)
+        _write_jsonl(results_path, kept)
+    return kept
 
 
 def _run_attempt(
@@ -157,6 +221,7 @@ def _run_attempt(
     agent_factory: AgentFactory,
     judge: GradesAnswers,
     expected_model: str,
+    versions: Mapping[str, str],
     clock: Callable[[], float],
     now: Callable[[], datetime],
 ) -> _Outcome:
@@ -193,11 +258,12 @@ def _run_attempt(
             }
         )
 
-    tool_outputs = _tool_outputs([m for r in replies for m in r.messages])
+    tool_outputs = _graded_turn_context(replies)
     tool_calls = _tool_calls(reply.messages)
     exchanges = [Exchange(q, r.text) for q, r in zip(_questions(case), replies[:-1])]
     row: dict[str, Any] = {
         **base,
+        **versions,
         "prompt": case.question,
         "tags": list(case.tags),
         "stop_reason": _stop_reason(reply),
@@ -214,16 +280,16 @@ def _run_attempt(
         },
     }
     trace = to_trace(case, replies)
-    if reply.truncated:
-        return _Outcome(row={**row, "status": "truncated", "grade": {}}, trace=trace)
-    if reply.refused:
-        grade = {"pass": 0.0}
+    if reply.truncated or reply.refused:
+        # A failure, not a missing grade: leaving it out would raise the pass
+        # rate by dropping the hardest cases.
+        reason = "truncated" if reply.truncated else "refused"
         return _Outcome(
             row={
                 **row,
                 "status": "ok",
-                "grade": grade,
-                "explanation": {"pass": "refused"},
+                "grade": {"pass": 0.0},
+                "explanation": {"pass": reason},
             },
             trace=trace,
         )
@@ -279,6 +345,20 @@ def _play(
             reason = "refused" if reply.refused else "truncated"
             raise _SetupTurnFailed(f"turn {index} ({question!r}) was {reason}")
     return _Conversation(tuple(replies), tuple(latencies))
+
+
+def _graded_turn_context(replies: Sequence[AgentReply]) -> list[str]:
+    """The tool results the agent had when it wrote the last answer.
+
+    Earlier turns are compacted before each new question (search results
+    reduced to their sources, character state and equipment removed), so the
+    judge must not credit the answer with passages the agent no longer had.
+    """
+    earlier = [m for r in replies[:-1] for m in r.messages]
+    return [
+        *_tool_outputs(compact_history(earlier)),
+        *_tool_outputs(replies[-1].messages),
+    ]
 
 
 def _questions(case: AgentCase) -> tuple[str, ...]:
@@ -389,9 +469,20 @@ def _same_model(served: str, expected: str) -> bool:
 
 
 def summarize(
-    rows: Sequence[Mapping[str, Any]], *, attempts_run: int, errors: int
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    case_ids: Sequence[str],
+    reps: int,
+    attempts_run: int,
+    errors: int,
 ) -> RunSummary:
-    ok_rows = [r for r in rows if r.get("status") == "ok" and r.get("grade")]
+    """Pass rate over the given cases: mean over cases of the mean over reps."""
+    selected = set(case_ids)
+    ok_rows = [
+        r
+        for r in rows
+        if r["prompt_id"] in selected and r.get("status") == "ok" and r.get("grade")
+    ]
     per_case: dict[str, list[float]] = {}
     for row in ok_rows:
         per_case.setdefault(row["prompt_id"], []).append(row["grade"]["pass"])
@@ -412,28 +503,27 @@ def summarize(
         pass_rate=pass_rate,
         ci_half_width=ci,
         metric_means={name: sum(v) / len(v) for name, v in metric_values.items()},
+        graded_attempts=len(ok_rows),
+        expected_attempts=len(selected) * reps,
+        truncated=sum(r.get("stop_reason") == TRUNCATED_STOP_REASON for r in ok_rows),
+        ungraded_cases=tuple(c for c in dict.fromkeys(case_ids) if c not in per_case),
     )
 
 
 def row_cost_usd(row: Mapping[str, Any]) -> float:
-    """Agent + judge cost of one row, derived from recorded usage and model."""
+    """Agent + judge cost of one row, derived from recorded usage and model.
+
+    A model missing from the price table counts 0 (see `prestie.pricing`).
+    """
     return _usage_cost(row.get("model"), row.get("usage")) + _usage_cost(
         row.get("judge_model"), row.get("judge_usage")
     )
 
 
 def _usage_cost(model: str | None, usage: Mapping[str, int] | None) -> float:
-    price = PRICES.get(model or "")
-    if not price or not usage:
+    if not model or not usage:
         return 0.0
-    input_equivalent = (
-        usage.get("input_tokens", 0)
-        + 1.25 * usage.get("cache_creation_input_tokens", 0)
-        + 0.1 * usage.get("cache_read_input_tokens", 0)
-    )
-    return (
-        input_equivalent * price["in"] + usage.get("output_tokens", 0) * price["out"]
-    ) / 1e6
+    return usage_cost_usd(model, Usage(**usage)) or 0.0
 
 
 def initial_state() -> dict[str, Any]:
@@ -452,7 +542,10 @@ def initial_state() -> dict[str, Any]:
             {"id": "tool_calls", "label": "searches"},
             {"id": "answer_lines", "label": "lines"},
         ],
-        "prices": {model: dict(p) for model, p in PRICES.items()},
+        "prices": {
+            model: {"in": input_price, "out": output_price}
+            for model, (input_price, output_price) in PRICES.items()
+        },
     }
 
 
@@ -469,30 +562,36 @@ def ensure_state(flow_dir: Path) -> Path:
     return path
 
 
-def check_harness(
-    state_path: Path, harness_paths: Sequence[Path], *, approve: bool
-) -> None:
-    """Refuse to run if the grading code changed since the user approved it.
-
-    Scores are only comparable across runs graded by the same code; this makes
-    any change to the harness an explicit, user-approved decision.
-    """
+def harness_digest(harness_paths: Sequence[Path]) -> str:
     digest = hashlib.sha256()
     for path in sorted(harness_paths):
         digest.update(path.name.encode())
         digest.update(path.read_bytes())
-    sha = digest.hexdigest()
+    return digest.hexdigest()
+
+
+def check_harness(
+    state_path: Path, harness_paths: Sequence[Path], *, approve: bool
+) -> str:
+    """Refuse to run if the grading code changed since the user approved it.
+
+    Scores are only comparable across runs graded by the same code; this makes
+    any change to the harness an explicit, user-approved decision. Returns the
+    approved digest, which every result row records.
+    """
+    sha = harness_digest(harness_paths)
     state = json.loads(state_path.read_text(encoding="utf-8") or "{}")
     if approve:
         state_path.write_text(
             json.dumps({**state, "harness_sha": sha}, indent=2), encoding="utf-8"
         )
-        return
+        return sha
     if state.get("harness_sha") != sha:
         raise HarnessChangedError(
             "The grading harness is new or changed since it was last approved. "
             "Review it, then re-run with --approve-harness."
         )
+    return sha
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -503,6 +602,16 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line
     ]
+
+
+def _write_jsonl(path: Path, records: Sequence[Mapping[str, Any]]) -> None:
+    """Replace the file atomically: a crash leaves the old or the new rows."""
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
+        "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records),
+        encoding="utf-8",
+    )
+    tmp.replace(path)
 
 
 def _append(path: Path, record: Mapping[str, Any]) -> None:

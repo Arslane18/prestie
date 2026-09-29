@@ -182,6 +182,10 @@ def record_judgments(
         entry["judged_relevant"] = [*entry.get("judged_relevant", []), *relevant]
         entry["judged_irrelevant"] = [*entry.get("judged_irrelevant", []), *irrelevant]
         entry["judge_model"] = judge_model
-    path.write_text(
+    # Replaced atomically: called after each case, a crash mid-write must not
+    # leave a truncated cases file (it holds the hand labels too).
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(
         json.dumps(entries, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    tmp.replace(path)
