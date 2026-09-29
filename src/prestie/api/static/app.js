@@ -24,6 +24,7 @@ const $ = (id) => document.getElementById(id);
 const log = $("log");
 const question = $("question");
 let character = null; // last state received, re-rendered as it ages
+let characterError = false; // a read error is showing: do not paint over it
 let busy = false;
 
 // --- character card -------------------------------------------------------------
@@ -77,6 +78,7 @@ function formatDuration(minutes) {
 }
 
 function showCharacterError(message) {
+  characterError = true; // kept until a valid state arrives
   const status = $("char-status");
   status.hidden = false;
   status.className = "status error";
@@ -88,6 +90,7 @@ async function loadCharacter() {
     const body = await (await fetch("/api/character")).json();
     if (body.success) {
       character = body.data;
+      characterError = false;
       renderCharacter();
     } else {
       showCharacterError(body.error);
@@ -102,6 +105,7 @@ function watchCharacter() {
   const source = new EventSource("/api/character/stream");
   source.addEventListener("state", (event) => {
     character = JSON.parse(event.data);
+    characterError = false;
     renderCharacter();
   });
   source.addEventListener("error", (event) => {
@@ -391,5 +395,9 @@ showEmptyState();
 enableResting();
 loadCharacter();
 watchCharacter();
-setInterval(() => character && renderAge(character), AGE_REFRESH_MS);
+// The age ticks on, but never over a read error: the last good character would
+// otherwise reappear as if the export were fine.
+setInterval(() => {
+  if (character && !characterError) renderAge(character);
+}, AGE_REFRESH_MS);
 question.focus();

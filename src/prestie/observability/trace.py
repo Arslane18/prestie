@@ -148,8 +148,9 @@ class TurnRecorder:
     def _write(self, trace: TurnTrace) -> None:
         try:
             self._sink.write(trace)
-        except OSError:
-            # Tracing must never break the answer, but a lost trace is logged.
+        except Exception:  # logged, never raised
+            # Tracing runs after the answer was shown: any failure here (disk,
+            # an unserializable detail) is logged and must not replace it.
             logger.exception("could not write trace %s", trace.trace_id)
 
 

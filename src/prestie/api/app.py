@@ -34,6 +34,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StringConstraints
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from prestie.agent.agent import (
@@ -157,7 +158,8 @@ def create_app(
     allowed_hosts: Sequence[str] = DEFAULT_ALLOWED_HOSTS,
     trace_sink: RecordsTraces | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Prestie", docs_url=None, redoc_url=None)
+    # No docs nor schema: a local app has no API consumers to describe itself to.
+    app = FastAPI(title="Prestie", docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))
     _add_error_handlers(app)
     watcher = watcher_factory()
@@ -198,8 +200,7 @@ def create_app(
             yield _error_event(BUSY_MESSAGE)
             return
         try:
-            trace_id, events = session.ask_stream(request.question)
-            yield from _chat_events(events, trace_id)
+            yield from _chat_events(lambda: session.ask_stream(request.question))
         finally:
             session.turn_lock.release()
 
@@ -249,9 +250,12 @@ TRACE_ONLY_EVENTS = (ToolCallFinished, RequestFinished)
 
 
 def _chat_events(
-    events: Iterator[AgentEvent], trace_id: str | None = None
+    start: Callable[[], tuple[str | None, Iterator[AgentEvent]]],
 ) -> Iterator[ServerSentEvent]:
+    """SSE events of one turn. `start` builds the agent and its event stream
+    inside the error handling, so a failure there still reaches the page."""
     try:
+        trace_id, events = start()
         for event in events:
             if not isinstance(event, TRACE_ONLY_EVENTS):
                 yield _to_sse(event, trace_id)
@@ -366,8 +370,11 @@ def _envelope(data: Any, error: str | None = None) -> dict[str, Any]:
 
 
 def _add_error_handlers(app: FastAPI) -> None:
-    @app.exception_handler(HTTPException)
-    async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
+    # Starlette's own class also covers its 404/405, raised before any route.
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
         return JSONResponse(
             _envelope(None, str(exc.detail)), status_code=exc.status_code
         )

@@ -96,3 +96,26 @@ def test_text_still_streams_before_the_request_finishes():
     kinds = [type(e) for e in events_of(make_agent(client))]
 
     assert kinds.index(TextDelta) < kinds.index(RequestFinished)
+
+
+# --- lot A: a tool crash must not kill the turn -----------------------------------
+
+
+class CrashingTool(FakeTool):
+    def run(self, tool_input):
+        raise RuntimeError("chroma collection does not exist")
+
+
+def test_an_unexpected_tool_crash_becomes_an_error_result(caplog):
+    client = FakeClient(
+        tool_response(("search_knowledge_base", {"query": "stats"})),
+        text_response("Recherche indisponible."),
+    )
+
+    reply = make_agent(client, CrashingTool()).ask("q")
+
+    [result] = client.requests[1]["messages"][-1]["content"]
+    assert result["is_error"] is True
+    assert "RuntimeError" in result["content"]
+    assert reply.text == "Recherche indisponible."  # the turn went on
+    assert "chroma collection does not exist" in caplog.text  # and it was logged

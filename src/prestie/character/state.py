@@ -120,13 +120,22 @@ def _state(snap: Mapping[str, Any]) -> CharacterState:
         active_quest=_active_quest(_mapping(snap, "activeQuest")),
         quests=tuple(_quest(entry) for entry in _items(snap, "quests")),
         captured_at=datetime.fromtimestamp(_require(snap, "capturedAt", int), UTC),
-        equipment=_equipment(_mapping(snap, "equipment")),
-        equipment_error=_optional(snap, "equipmentError", str),
+        **_equipment_fields(snap),
     )
 
 
-def _equipment(raw: Mapping[str, Any] | None) -> Equipment | None:
-    return None if raw is None else equipment_from_snapshot(raw)
+def _equipment_fields(snap: Mapping[str, Any]) -> dict[str, Any]:
+    """Equipment and its error. The addon isolates gear reading so that a
+    failure there never loses the character; the backend does the same when
+    the exported gear does not validate (e.g. a slot a new patch adds)."""
+    addon_error = _optional(snap, "equipmentError", str)
+    raw = _mapping(snap, "equipment")
+    if raw is None:
+        return {"equipment": None, "equipment_error": addon_error}
+    try:
+        return {"equipment": equipment_from_snapshot(raw), "equipment_error": None}
+    except CharacterStateError as exc:
+        return {"equipment": None, "equipment_error": f"backend: {exc}"}
 
 
 def _spec(spec: Mapping[str, Any] | None) -> Spec | None:

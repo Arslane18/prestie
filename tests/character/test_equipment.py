@@ -159,3 +159,14 @@ def test_worn_items_carry_their_equip_location_when_exported():
 
     assert worn[0].two_handed is True
     assert worn[1].two_handed is False  # older exports: no equipLoc
+
+
+def test_invalid_equipment_does_not_hide_the_rest_of_the_character():
+    broken = raw(equipped=[{**HELM, "slot": 42}])  # a slot a future patch adds
+
+    state = character_state_from_saved_variables(snapshot(equipment=broken))
+
+    assert state.level == 83  # the character is still readable
+    assert state.equipment is None
+    assert state.equipment_error.startswith("backend:")
+    assert "42" in state.equipment_error

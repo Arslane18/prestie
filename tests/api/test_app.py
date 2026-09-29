@@ -550,3 +550,34 @@ def test_traces_keep_the_character_in_the_addon_format(agents):
     assert snapshot["class"] == {"name": "Prêtresse", "file": "PRIEST"}
     assert snapshot["spec"]["id"] == 256
     assert "capturedAt" not in snapshot
+
+
+# --- lot A: errors reach the page ---------------------------------------------------
+
+
+def test_an_agent_that_cannot_be_built_sends_an_error_event(agents):
+    def broken_factory():
+        raise RuntimeError("chroma is gone")
+
+    app = create_app(
+        agent_factory=broken_factory,
+        watcher_factory=lambda: FakeWatcher(),
+        now=lambda: NOW,
+        allowed_hosts=["testserver"],
+    )
+
+    response = TestClient(app).post("/api/chat", json={"question": "q"}, headers=HEADERS)
+
+    assert [name for name, _ in sse_events(response)] == ["error"]
+
+
+def test_unknown_routes_use_the_envelope(agents):
+    response = make_client(agents).get("/nope")
+
+    assert response.status_code == 404
+    body = response.json()
+    assert body["success"] is False and body["data"] is None and body["error"]
+
+
+def test_the_api_schema_is_not_served(agents):
+    assert make_client(agents).get("/openapi.json").status_code == 404

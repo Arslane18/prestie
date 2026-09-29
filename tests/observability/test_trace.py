@@ -201,3 +201,14 @@ def test_the_raw_character_snapshot_is_kept_for_replay():
 
     assert sink.traces[0].character_snapshot == raw
     assert sink.traces[0].to_json()["character_snapshot"] == raw
+
+
+def test_any_sink_failure_never_breaks_the_answer(caplog):
+    class UnserializableSink:
+        def write(self, trace):
+            raise TypeError("Object of type float32 is not JSON serializable")
+
+    events = list(recorder(UnserializableSink()).observe("q", answered_turn()))
+
+    assert isinstance(events[-1], TurnFinished)
+    assert "float32" in caplog.text

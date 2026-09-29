@@ -18,6 +18,7 @@ writes it and announces each tool call, so a UI can show progress instead of a
 spinner. `ask` runs the same loop and only keeps the final reply.
 """
 
+import logging
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -27,6 +28,8 @@ import anthropic
 
 from prestie.agent.context import compact_history
 from prestie.agent.tools import ToolOutcome
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_TOKENS = 16000
 # A focused Q&A rarely needs more than 2-3 searches; the cap bounds cost/latency.
@@ -301,7 +304,16 @@ class Agent:
         tool = self._tools.get(call.name)
         if tool is None:
             return ToolOutcome(f"Unknown tool: {call.name}", is_error=True)
-        return tool.run(call.input)
+        try:
+            return tool.run(call.input)
+        except Exception as exc:  # logged, and the turn goes on
+            # Tools report their expected failures themselves; anything else
+            # (a stale index, a full disk) must not end the conversation.
+            logger.exception("tool %s failed", call.name)
+            return ToolOutcome(
+                f"Tool failed ({type(exc).__name__}): it is unavailable right now.",
+                is_error=True,
+            )
 
 
 def _tool_result(block: Any, outcome: ToolOutcome) -> dict[str, Any]:
