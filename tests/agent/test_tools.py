@@ -230,3 +230,33 @@ def test_label_mentions_alternative_phrasings():
     )
 
     assert tool_call_label(call) == "[recherche] threat (+2 formulations)"
+
+
+# --- details for traces ------------------------------------------------------------
+
+
+def test_search_details_list_the_queries_and_each_returned_passage():
+    hit = SearchHit(
+        id="c1",
+        text="T",
+        metadata={"section": "Fade Pulling", "source_url": "https://iv/rot#fade"},
+        distance=0.42,
+    )
+    tool = KnowledgeBaseTool(PerQueryRetriever({"threat": [hit], "tanking": [hit]}))
+
+    outcome = tool.run(
+        {"query": "threat", "alternative_queries": ["tanking"], "spec": "shadow-priest"}
+    )
+
+    assert outcome.details == {
+        "queries": ["threat", "tanking"],
+        "results": [
+            {"section": "Fade Pulling", "source_url": "https://iv/rot#fade", "distance": 0.42}
+        ],
+    }
+
+
+def test_search_without_results_has_empty_details_results():
+    outcome = KnowledgeBaseTool(FakeRetriever([])).run({"query": "x"})
+
+    assert outcome.details == {"queries": ["x"], "results": []}

@@ -128,6 +128,27 @@ def test_chat_streams_tool_calls_text_and_the_final_reply(agents):
     assert agents[0].questions == ["Stats ?"]
 
 
+
+def test_trace_only_events_are_not_sent_to_the_page(agents):
+    # Regression: the agent's observability events once crashed the stream.
+    from prestie.agent.agent import RequestFinished, ToolCallFinished
+
+    call = ToolCall("search_knowledge_base", {"query": "stats"})
+    agent = ScriptedAgent(
+        events=[
+            ToolCallStarted(call),
+            ToolCallFinished(call, is_error=False, duration_s=0.2),
+            TextDelta("ok"),
+            RequestFinished("claude-opus-5", Usage(), "end_turn", 1.5),
+            TurnFinished(AgentReply("ok")),
+        ]
+    )
+    client = make_client(agents, agent=agent)
+
+    response = client.post("/api/chat", json={"question": "q"}, headers=HEADERS)
+
+    assert [name for name, _ in sse_events(response)] == ["tool", "text", "done"]
+
 def test_chat_relays_fallback_restarts(agents):
     agent = ScriptedAgent(
         events=[
@@ -372,3 +393,77 @@ def test_ui_helpers_pass_their_node_tests():
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+# --- traces -----------------------------------------------------------------------
+
+
+class MemorySink:
+    def __init__(self):
+        self.traces = []
+
+    def write(self, trace):
+        self.traces.append(trace)
+
+
+def traced_client(agents, sink, watcher=None):
+    app = create_app(
+        agent_factory=lambda: agents.append(ScriptedAgent()) or agents[-1],
+        watcher_factory=lambda: watcher or FakeWatcher(),
+        now=lambda: NOW,
+        allowed_hosts=["testserver"],
+        trace_sink=sink,
+    )
+    return TestClient(app)
+
+
+def test_each_chat_turn_is_traced_with_a_character_summary(agents):
+    sink = MemorySink()
+    client = traced_client(agents, sink)
+
+    client.post("/api/chat", json={"question": "Stats ?"}, headers=HEADERS)
+
+    [trace] = sink.traces
+    assert trace.question == "Stats ?"
+    assert trace.outcome == "answered"
+    assert trace.turn == 1
+    assert trace.character == {
+        "class": "PRIEST",
+        "spec_id": 256,
+        "spec": "Discipline",
+        "level": 6,
+        "hero_talent": None,
+        "age_minutes": 12,
+    }
+
+
+def test_reset_starts_a_new_traced_session(agents):
+    sink = MemorySink()
+    client = traced_client(agents, sink)
+
+    client.post("/api/chat", json={"question": "a"}, headers=HEADERS)
+    client.post("/api/chat", json={"question": "b"}, headers=HEADERS)
+    client.post("/api/reset", headers=HEADERS)
+    client.post("/api/chat", json={"question": "c"}, headers=HEADERS)
+
+    first, second, third = sink.traces
+    assert first.session_id == second.session_id != third.session_id
+    assert [t.turn for t in sink.traces] == [1, 2, 1]
+
+
+def test_an_unreadable_character_is_traced_as_none(agents):
+    sink = MemorySink()
+    watcher = FakeWatcher(error=CharacterStateError("Prestie.lua not found"))
+    client = traced_client(agents, sink, watcher)
+
+    client.post("/api/chat", json={"question": "q"}, headers=HEADERS)
+
+    assert sink.traces[0].character is None
+
+
+def test_without_a_sink_nothing_is_traced(agents):
+    client = make_client(agents)
+
+    response = client.post("/api/chat", json={"question": "q"}, headers=HEADERS)
+
+    assert response.status_code == 200

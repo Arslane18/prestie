@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import uuid
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ import uvicorn
 from prestie.agent.agent import (
     Agent,
     AgentError,
+    AgentEvent,
     AgentReply,
     FallbackRestart,
     TextDelta,
@@ -37,7 +39,7 @@ from prestie.agent.prompts import HERO_TALENTS, PlayerContext, build_system_prom
 from prestie.agent.quest_tool import QuestDetailsTool
 from prestie.agent.tool_labels import tool_call_label
 from prestie.agent.tools import KnowledgeBaseTool
-from prestie.api.app import create_app
+from prestie.api.app import character_summary, create_app
 from prestie.blizzard.client import GameDataClient, build_http_client
 from prestie.blizzard.quests import QuestCache, QuestRepository
 from prestie.character.state import CharacterStateError
@@ -84,6 +86,8 @@ from prestie.knowledge.embeddings import Embedder, EmbeddingError, VoyageEmbedde
 from prestie.knowledge.filters import metadata_filter
 from prestie.knowledge.reranker import VoyageReranker
 from prestie.knowledge.retriever import Retriever
+from prestie.observability.store import JsonlTraceStore
+from prestie.observability.trace import TurnRecorder
 from prestie.knowledge.rewriting import (
     STRATEGIES,
     CachedQueryWriter,
@@ -320,6 +324,9 @@ def _build_parser() -> argparse.ArgumentParser:
     chat.add_argument("--hero-talent", choices=HERO_TALENTS)
     chat.add_argument("-q", "--question", help="Ask one question and exit")
     chat.add_argument("--verbose", action="store_true", help="Show token usage")
+    chat.add_argument(
+        "--no-trace", action="store_true", help="Do not record this session's turns"
+    )
     chat.set_defaults(handler=_chat)
 
     serve = commands.add_parser(
@@ -584,11 +591,13 @@ def _chat(args: argparse.Namespace) -> int:
             if args.level is not None
             else None
         )
+        settings = load_settings()
         # Tool calls are shown from the event stream (see _stream_reply).
-        agent = build_agent(load_settings(), player, on_tool_call=_ignore_tool_call)
+        agent = build_agent(settings, player, on_tool_call=_ignore_tool_call)
     except (ValueError, *KNOWLEDGE_ERRORS) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    recorder = None if args.no_trace else _chat_recorder(settings, player)
 
     one_shot = args.question is not None
     if not one_shot:
@@ -596,7 +605,10 @@ def _chat(args: argparse.Namespace) -> int:
         print(f"Prestie — {who}. Tape 'exit' pour quitter.")
     for question in [args.question] if one_shot else _read_questions():
         try:
-            _stream_reply(agent, question, verbose=args.verbose)
+            events = agent.ask_stream(question)
+            if recorder is not None:
+                events = recorder.observe(question, events)
+            _stream_reply(events, verbose=args.verbose)
         except AgentError as exc:
             print(f"\nerror: {exc}", file=sys.stderr)
             if one_shot:
@@ -604,10 +616,30 @@ def _chat(args: argparse.Namespace) -> int:
     return 0
 
 
-def _stream_reply(agent: Agent, question: str, *, verbose: bool) -> None:
+def _chat_recorder(settings: Settings, player: PlayerContext | None) -> TurnRecorder:
+    """Traces this chat session: the player given on the command line, or the
+    character the addon exported at each question."""
+    store = JsonlTraceStore(settings.trace_dir)
+    if player is not None:
+        manual = {
+            "class": "DEATHKNIGHT",
+            "spec": player.spec,
+            "level": player.level,
+            "hero_talent": player.hero_talent,
+        }
+        return TurnRecorder(store, session_id=uuid.uuid4().hex, character=lambda: manual)
+    watcher = SavedVariablesWatcher(settings.require_saved_variables_path())
+    return TurnRecorder(
+        store,
+        session_id=uuid.uuid4().hex,
+        character=lambda: character_summary(watcher, datetime.now(UTC)),
+    )
+
+
+def _stream_reply(events: Iterator[AgentEvent], *, verbose: bool) -> None:
     """Print the answer as it is generated, with tool calls on their own lines."""
     print("\nprestie> ", end="", flush=True)
-    for event in agent.ask_stream(question):
+    for event in events:
         if isinstance(event, TextDelta):
             print(event.text, end="", flush=True)
         elif isinstance(event, ToolCallStarted):
@@ -634,6 +666,7 @@ def _serve(args: argparse.Namespace) -> int:
             settings, None, _ignore_tool_call, retriever=retriever, client=client
         ),
         watcher_factory=lambda: SavedVariablesWatcher(saved_variables),
+        trace_sink=JsonlTraceStore(settings.trace_dir),
     )
     print(f"Prestie sur http://{LOCALHOST}:{args.port} (Ctrl+C pour arrêter)")
     if args.open:

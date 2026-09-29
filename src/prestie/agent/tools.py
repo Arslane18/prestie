@@ -8,7 +8,7 @@ arguments. We run the search ourselves and send the passages back in a
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from html import escape
 from typing import Any, Protocol
 
@@ -116,6 +116,9 @@ class Retrieves(Protocol):
 class ToolOutcome:
     content: str
     is_error: bool = False
+    # Structured facts for traces (e.g. the passages a search returned, with
+    # their distance); never sent to the model, which reads `content`.
+    details: Mapping[str, Any] = field(default_factory=dict)
 
 
 class KnowledgeBaseTool:
@@ -145,7 +148,20 @@ class KnowledgeBaseTool:
             if alternatives
             else hit_lists[0]
         )
-        return ToolOutcome(format_results(query, hits, alternatives))
+        details = {
+            "queries": [query, *alternatives],
+            "results": [_hit_details(hit) for hit in hits],
+        }
+        return ToolOutcome(format_results(query, hits, alternatives), details=details)
+
+
+def _hit_details(hit: SearchHit) -> dict[str, Any]:
+    # The distance of the best passage tells how well the corpus covers a query.
+    return {
+        "section": hit.metadata.get("section"),
+        "source_url": hit.metadata.get("source_url"),
+        "distance": hit.distance,
+    }
 
 
 def _alternatives(query: str, raw: Any) -> tuple[str, ...]:

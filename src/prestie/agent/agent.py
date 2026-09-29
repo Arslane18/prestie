@@ -18,8 +18,9 @@ writes it and announces each tool call, so a UI can show progress instead of a
 spinner. `ask` runs the same loop and only keeps the final reply.
 """
 
+import time
 from collections.abc import Callable, Generator, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import anthropic
@@ -110,11 +111,38 @@ class FallbackRestart:
 
 
 @dataclass(frozen=True)
+class ToolCallFinished:
+    """A tool returned (for traces; a UI can ignore it)."""
+
+    call: ToolCall
+    is_error: bool
+    duration_s: float
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RequestFinished:
+    """One API request of the turn ended (for traces; a UI can ignore it)."""
+
+    model: str
+    usage: Usage
+    stop_reason: str
+    duration_s: float
+
+
+@dataclass(frozen=True)
 class TurnFinished:
     reply: AgentReply
 
 
-AgentEvent = TextDelta | ToolCallStarted | FallbackRestart | TurnFinished
+AgentEvent = (
+    TextDelta
+    | ToolCallStarted
+    | ToolCallFinished
+    | RequestFinished
+    | FallbackRestart
+    | TurnFinished
+)
 
 
 class Tool(Protocol):
@@ -137,6 +165,7 @@ class Agent:
         on_tool_call: Callable[[ToolCall], None] | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         max_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self._client = client
         self._model = model
@@ -145,6 +174,7 @@ class Agent:
         self._on_tool_call = on_tool_call or (lambda call: None)
         self._max_tokens = max_tokens
         self._max_tool_rounds = max_tool_rounds
+        self._clock = clock
         self._history: tuple[dict[str, Any], ...] = ()
 
     @property
@@ -173,11 +203,20 @@ class Agent:
         tool_rounds = 0
 
         while True:
+            started = self._clock()
             response = yield from self._stream_request(
                 (*history, *turn), allow_tools=tool_rounds < self._max_tool_rounds
             )
-            usage = usage + Usage.from_api(response.usage)
-            models = (*models, str(getattr(response, "model", self._model)))
+            request_usage = Usage.from_api(response.usage)
+            usage = usage + request_usage
+            model = str(getattr(response, "model", self._model))
+            models = (*models, model)
+            yield RequestFinished(
+                model,
+                request_usage,
+                str(response.stop_reason),
+                self._clock() - started,
+            )
             if response.stop_reason == "refusal":
                 yield TurnFinished(
                     AgentReply(
@@ -203,7 +242,12 @@ class Agent:
             results = []
             for block, call in zip(tool_uses, calls):
                 yield ToolCallStarted(call)
-                results.append(self._run_tool(block, call))
+                started = self._clock()
+                outcome = self._run_tool(call)
+                yield ToolCallFinished(
+                    call, outcome.is_error, self._clock() - started, outcome.details
+                )
+                results.append(_tool_result(block, outcome))
             # All results of one round go back in a single user message.
             turn = (*turn, {"role": "user", "content": results})
 
@@ -252,19 +296,21 @@ class Agent:
         except anthropic.APIError as exc:
             raise _agent_error(exc) from exc
 
-    def _run_tool(self, block: Any, call: ToolCall) -> dict[str, Any]:
+    def _run_tool(self, call: ToolCall) -> ToolOutcome:
         self._on_tool_call(call)
         tool = self._tools.get(call.name)
         if tool is None:
-            outcome = ToolOutcome(f"Unknown tool: {call.name}", is_error=True)
-        else:
-            outcome = tool.run(call.input)
-        result = {
-            "type": "tool_result",
-            "tool_use_id": block.id,
-            "content": outcome.content,
-        }
-        return {**result, "is_error": True} if outcome.is_error else result
+            return ToolOutcome(f"Unknown tool: {call.name}", is_error=True)
+        return tool.run(call.input)
+
+
+def _tool_result(block: Any, outcome: ToolOutcome) -> dict[str, Any]:
+    result = {
+        "type": "tool_result",
+        "tool_use_id": block.id,
+        "content": outcome.content,
+    }
+    return {**result, "is_error": True} if outcome.is_error else result
 
 
 def _index_by_name(tools: Sequence[Tool]) -> dict[str, Tool]:

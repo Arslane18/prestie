@@ -13,6 +13,8 @@ from dotenv import dotenv_values
 
 DEFAULT_VOYAGE_MODEL = "voyage-4-large"
 DEFAULT_CHROMA_DIR = Path("data/chroma")
+# Traces of real chat turns (questions included): under data/, never committed.
+DEFAULT_TRACE_DIR = Path("data/traces")
 DEFAULT_CLAUDE_MODEL = "claude-opus-5"
 DEFAULT_BLIZZARD_REGION = "eu"
 BLIZZARD_REGIONS = ("us", "eu", "kr", "tw")
@@ -27,6 +29,7 @@ class Settings:
     voyage_api_key: str | None = field(repr=False)
     voyage_model: str = DEFAULT_VOYAGE_MODEL
     chroma_dir: Path = DEFAULT_CHROMA_DIR
+    trace_dir: Path = DEFAULT_TRACE_DIR
     # None lets the Anthropic SDK resolve credentials itself (env var, `ant` profile).
     anthropic_api_key: str | None = field(default=None, repr=False)
     claude_model: str = DEFAULT_CLAUDE_MODEL
@@ -76,6 +79,7 @@ def load_settings(env: Mapping[str, str | None] | None = None) -> Settings:
         voyage_api_key=_secret(env, "VOYAGE_API_KEY"),
         voyage_model=env.get("VOYAGE_MODEL") or DEFAULT_VOYAGE_MODEL,
         chroma_dir=Path(env.get("PRESTIE_CHROMA_DIR") or DEFAULT_CHROMA_DIR),
+        trace_dir=Path(env.get("PRESTIE_TRACE_DIR") or DEFAULT_TRACE_DIR),
         anthropic_api_key=_secret(env, "ANTHROPIC_API_KEY"),
         claude_model=env.get("ANTHROPIC_MODEL") or DEFAULT_CLAUDE_MODEL,
         saved_variables_path=_path(env, "PRESTIE_SAVEDVARIABLES"),

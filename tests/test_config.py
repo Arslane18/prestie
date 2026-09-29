@@ -107,3 +107,8 @@ def test_repr_never_leaks_the_blizzard_secret():
     settings = load_settings({"BLIZZARD_CLIENT_SECRET": "shh-secret"})
 
     assert "shh-secret" not in repr(settings)
+
+
+def test_trace_directory_defaults_under_data_and_can_be_overridden():
+    assert load_settings({}).trace_dir == Path("data/traces")
+    assert load_settings({"PRESTIE_TRACE_DIR": "/tmp/t"}).trace_dir == Path("/tmp/t")

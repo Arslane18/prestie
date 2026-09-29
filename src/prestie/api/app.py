@@ -21,6 +21,7 @@ local Host headers are accepted, which blocks DNS rebinding.
 import asyncio
 import logging
 import threading
+import uuid
 from pathlib import Path
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import asdict, replace
@@ -40,12 +41,15 @@ from prestie.agent.agent import (
     AgentEvent,
     AgentReply,
     FallbackRestart,
+    RequestFinished,
     TextDelta,
+    ToolCallFinished,
     ToolCallStarted,
     TurnFinished,
 )
 from prestie.agent.tool_labels import tool_call_label
 from prestie.character.state import CharacterState, CharacterStateError
+from prestie.observability.trace import TurnRecorder, WritesTraces
 
 logger = logging.getLogger(__name__)
 
@@ -90,11 +94,21 @@ class WatchesCharacter(Protocol):
 
 
 class ChatSession:
-    """The single conversation of this local, single-player app."""
+    """The single conversation of this local, single-player app.
 
-    def __init__(self, agent_factory: Callable[[], StreamsAnswers]):
+    With a trace sink, each turn is recorded; a reset starts a new session id,
+    since the agent forgets the conversation.
+    """
+
+    def __init__(
+        self,
+        agent_factory: Callable[[], StreamsAnswers],
+        recorder_factory: Callable[[], TurnRecorder] | None = None,
+    ):
         self._agent_factory = agent_factory
+        self._recorder_factory = recorder_factory
         self._agent: StreamsAnswers | None = None
+        self._recorder: TurnRecorder | None = None
         # One turn at a time: the agent's history is not safe to interleave.
         self.turn_lock = threading.Lock()
 
@@ -102,10 +116,20 @@ class ChatSession:
     def agent(self) -> StreamsAnswers:
         if self._agent is None:
             self._agent = self._agent_factory()
+            self._recorder = (
+                self._recorder_factory() if self._recorder_factory else None
+            )
         return self._agent
+
+    def ask_stream(self, question: str) -> Iterator[AgentEvent]:
+        events = self.agent.ask_stream(question)
+        if self._recorder is None:
+            return events
+        return self._recorder.observe(question, events)
 
     def reset(self) -> None:
         self._agent = None
+        self._recorder = None
 
 
 def create_app(
@@ -114,12 +138,24 @@ def create_app(
     watcher_factory: Callable[[], WatchesCharacter],
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     allowed_hosts: Sequence[str] = DEFAULT_ALLOWED_HOSTS,
+    trace_sink: WritesTraces | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Prestie", docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))
     _add_error_handlers(app)
-    session = ChatSession(agent_factory)
     watcher = watcher_factory()
+    recorder_factory = (
+        (
+            lambda: TurnRecorder(
+                trace_sink,
+                session_id=uuid.uuid4().hex,
+                character=lambda: character_summary(watcher, now()),
+            )
+        )
+        if trace_sink is not None
+        else None
+    )
+    session = ChatSession(agent_factory, recorder_factory)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", include_in_schema=False)
@@ -144,7 +180,7 @@ def create_app(
             yield _error_event(BUSY_MESSAGE)
             return
         try:
-            yield from _chat_events(session.agent, request.question)
+            yield from _chat_events(session.ask_stream(request.question))
         finally:
             session.turn_lock.release()
 
@@ -182,10 +218,15 @@ def require_client_header(
         raise HTTPException(status_code=403, detail=f"missing {CLIENT_HEADER} header")
 
 
-def _chat_events(agent: StreamsAnswers, question: str) -> Iterator[ServerSentEvent]:
+# Timings and usage for traces: nothing the page shows.
+TRACE_ONLY_EVENTS = (ToolCallFinished, RequestFinished)
+
+
+def _chat_events(events: Iterator[AgentEvent]) -> Iterator[ServerSentEvent]:
     try:
-        for event in agent.ask_stream(question):
-            yield _to_sse(event)
+        for event in events:
+            if not isinstance(event, TRACE_ONLY_EVENTS):
+                yield _to_sse(event)
     except AgentError as exc:
         yield _error_event(str(exc))
     except Exception:  # noqa: BLE001 - logged here, never leaked to the page
@@ -237,6 +278,25 @@ def character_json(state: CharacterState, now: datetime) -> dict[str, Any]:
         "covered_by_knowledge_base": state.covered_by_knowledge_base,
         "guide_spec": state.guide.key if state.guide else None,
         "class_guides": [spec.key for spec in state.class_guides],
+    }
+
+
+def character_summary(
+    watcher: WatchesCharacter, now: datetime
+) -> dict[str, Any] | None:
+    """What a trace keeps of the character: enough to replay the question."""
+    try:
+        state = watcher.latest()
+    except CharacterStateError:
+        return None
+    age_seconds = max(0, int((now - state.captured_at).total_seconds()))
+    return {
+        "class": state.class_token,
+        "spec_id": state.spec.id if state.spec else None,
+        "spec": state.spec.name if state.spec else None,
+        "level": state.level,
+        "hero_talent": state.hero_talent,
+        "age_minutes": age_seconds // SECONDS_PER_MINUTE,
     }
 
 

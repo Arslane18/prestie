@@ -198,8 +198,10 @@ class FakeAgent:
 
 
 @pytest.fixture
-def fake_agent(monkeypatch):
-    created = {}
+def fake_agent(monkeypatch, tmp_path):
+    # Chat traces go to a temporary directory, never to the real data/traces.
+    monkeypatch.setenv("PRESTIE_TRACE_DIR", str(tmp_path / "traces"))
+    created = {"trace_dir": tmp_path / "traces"}
 
     def build(settings, player, on_tool_call):
         created["player"] = player
@@ -740,3 +742,24 @@ def test_eval_can_select_tagged_cases(knowledge_env, tmp_path, capsys):
     assert cli.main(["eval", "--cases", str(cases), "--tag", "hard"]) == 0
 
     assert "(1 answerable questions" in capsys.readouterr().out
+
+
+def test_chat_traces_each_turn(fake_agent):
+    cli.main(["chat", "--level", "80", "-q", "Quelles stats ?"])
+
+    [day] = list(fake_agent["trace_dir"].glob("*.jsonl"))
+    [trace] = [json.loads(line) for line in day.read_text().splitlines()]
+    assert trace["question"] == "Quelles stats ?"
+    assert trace["outcome"] == "answered"
+    assert trace["character"] == {
+        "class": "DEATHKNIGHT",
+        "spec": "Blood",
+        "level": 80,
+        "hero_talent": None,
+    }
+
+
+def test_chat_can_run_without_traces(fake_agent):
+    cli.main(["chat", "--level", "80", "-q", "q", "--no-trace"])
+
+    assert not fake_agent["trace_dir"].exists()
