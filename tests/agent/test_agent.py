@@ -12,6 +12,7 @@ from prestie.agent.agent import (
     ToolCallStarted,
     TurnFinished,
 )
+from prestie.agent.anthropic_model import AnthropicChatModel
 from prestie.agent.tools import SEARCH_TOOL, ToolOutcome
 
 MODEL = "claude-opus-5"
@@ -98,7 +99,9 @@ class FakeTool:
 
 def make_agent(client, tool=None, **kwargs) -> Agent:
     tools = kwargs.pop("tools", None) or [tool or FakeTool()]
-    return Agent(client, model=MODEL, system_prompt=SYSTEM, tools=tools, **kwargs)
+    return Agent(
+        AnthropicChatModel(client, MODEL), system_prompt=SYSTEM, tools=tools, **kwargs
+    )
 
 
 def test_direct_answer_needs_a_single_request():
