@@ -15,6 +15,7 @@ from prestie.agent.character_tool import (
     SECONDS_PER_MINUTE,
     ProvidesCharacterState,
     knowledge_base_coverage,
+    served_state_details,
 )
 from prestie.agent.tools import ToolOutcome
 from prestie.character.equipment import (
@@ -83,7 +84,10 @@ class EquipmentTool:
                     is_error=True,
                 )
             return ToolOutcome(NOT_EXPORTED_MESSAGE, is_error=True)
-        return ToolOutcome(format_equipment(state, state.equipment, self._now()))
+        return ToolOutcome(
+            format_equipment(state, state.equipment, self._now()),
+            details=served_state_details(state),
+        )
 
 
 def format_equipment(state: CharacterState, gear: Equipment, now: datetime) -> str:

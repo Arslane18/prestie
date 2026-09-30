@@ -7,6 +7,11 @@ come from its own events (RequestFinished, ToolCallFinished), and the
 recorder adds what only the consumer sees, like the time before the first
 word reaches the player.
 
+The character kept is the one the agent actually read (the `served_state` a
+character tool puts in its details), falling back to the one exported when
+the question was asked if the agent read none: a /reload during the turn must
+not make the trace replay a character the agent never saw.
+
 The fields follow the OpenTelemetry GenAI conventions in spirit (model,
 input/output/cache tokens per request, one entry per tool call), so an
 export to a tracing backend stays a mapping away.
@@ -39,6 +44,8 @@ REFUSED = "refused"
 TRUNCATED = "truncated"
 ERROR = "error"
 INTERRUPTED = "interrupted"  # the consumer stopped reading (window closed)
+SERVED_STATE = "served_state"  # key of a character tool's details
+SECONDS_PER_MINUTE = 60
 
 
 class WritesTraces(Protocol):
@@ -170,6 +177,7 @@ class _TurnState:
     error: str | None = None
     answer: str = ""
     sources_added: bool = False
+    served_state: Mapping[str, Any] | None = None  # the last state a tool served
 
     def record(self, event: AgentEvent, at: float) -> "_TurnState":
         if isinstance(event, TextDelta) and self.first_token_at is None:
@@ -180,14 +188,17 @@ class _TurnState:
             )
             return replace(self, requests=(*self.requests, request))
         if isinstance(event, ToolCallFinished):
+            # The served state becomes the trace's character: not kept twice.
+            details = {k: v for k, v in event.details.items() if k != SERVED_STATE}
             tool = ToolTrace(
                 event.call.name,
                 dict(event.call.input),
                 event.is_error,
                 event.duration_s,
-                dict(event.details),
+                details,
             )
-            return replace(self, tools=(*self.tools, tool))
+            served = event.details.get(SERVED_STATE, self.served_state)
+            return replace(self, tools=(*self.tools, tool), served_state=served)
         if isinstance(event, TurnFinished):
             reply = event.reply
             outcome = (
@@ -220,8 +231,20 @@ class _TurnState:
             turn=self.turn,
             started_at=self.started_at,
             question=question,
-            character=character,
-            character_snapshot=character_snapshot,
+            character=(
+                character_summary_from(
+                    self.served_state["snapshot"],
+                    datetime.fromisoformat(self.served_state["captured_at"]),
+                    self.started_at,
+                )
+                if self.served_state
+                else character
+            ),
+            character_snapshot=(
+                self.served_state["snapshot"]
+                if self.served_state
+                else character_snapshot
+            ),
             outcome=self.outcome,
             error=self.error,
             duration_s=ended - self.started,
@@ -236,6 +259,22 @@ class _TurnState:
             cost_usd=_cost(self.requests),
             sources_added=self.sources_added,
         )
+
+
+def character_summary_from(
+    snapshot: Mapping[str, Any], captured_at: datetime, now: datetime
+) -> dict[str, Any]:
+    """What a trace keeps of the character, from its addon-format snapshot."""
+    spec = snapshot.get("spec") or {}
+    age_seconds = max(0, int((now - captured_at).total_seconds()))
+    return {
+        "class": (snapshot.get("class") or {}).get("file"),
+        "spec_id": spec.get("id"),
+        "spec": spec.get("name"),
+        "level": snapshot.get("level"),
+        "hero_talent": snapshot.get("heroTalent"),
+        "age_minutes": age_seconds // SECONDS_PER_MINUTE,
+    }
 
 
 def _cost(requests: tuple[RequestTrace, ...]) -> float | None:

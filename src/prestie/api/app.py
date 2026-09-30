@@ -60,7 +60,11 @@ from prestie.agent.tool_labels import tool_call_label
 from prestie.api.streaming import ThreadedStream
 from prestie.character.snapshot import state_to_snapshot
 from prestie.character.state import CharacterState, CharacterStateError
-from prestie.observability.trace import TurnRecorder, WritesTraces
+from prestie.observability.trace import (
+    TurnRecorder,
+    WritesTraces,
+    character_summary_from,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -339,15 +343,7 @@ def character_summary(
         state = watcher.latest()
     except CharacterStateError:
         return None
-    age_seconds = max(0, int((now - state.captured_at).total_seconds()))
-    return {
-        "class": state.class_token,
-        "spec_id": state.spec.id if state.spec else None,
-        "spec": state.spec.name if state.spec else None,
-        "level": state.level,
-        "hero_talent": state.hero_talent,
-        "age_minutes": age_seconds // SECONDS_PER_MINUTE,
-    }
+    return character_summary_from(state_to_snapshot(state), state.captured_at, now)
 
 
 def character_snapshot(watcher: WatchesCharacter) -> dict[str, Any] | None:

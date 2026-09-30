@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from prestie.agent.tools import ToolOutcome
+from prestie.character.snapshot import state_to_snapshot
 from prestie.character.state import CharacterState, CharacterStateError, Quest
 
 CHARACTER_STATE_TOOL_NAME = "get_character_state"
@@ -51,7 +52,23 @@ class CharacterStateTool:
             state = self._source.latest()
         except CharacterStateError as exc:
             return ToolOutcome(f"Character state unavailable: {exc}", is_error=True)
-        return ToolOutcome(format_state(state, self._now()))
+        return ToolOutcome(
+            format_state(state, self._now()), details=served_state_details(state)
+        )
+
+
+def served_state_details(state: CharacterState) -> dict[str, Any]:
+    """The state a tool served, for the trace: what the agent actually read.
+
+    The trace would otherwise keep the state captured when the question was
+    asked, which a /reload during the turn makes different.
+    """
+    return {
+        "served_state": {
+            "snapshot": state_to_snapshot(state),
+            "captured_at": state.captured_at.isoformat(),
+        }
+    }
 
 
 def format_state(state: CharacterState, now: datetime) -> str:

@@ -151,6 +151,9 @@ class KnowledgeBaseTool:
         details = {
             "queries": [query, *alternatives],
             "results": [_hit_details(hit) for hit in hits],
+            # How well the corpus covers the question itself: fused results
+            # mix distances of several queries, which are not comparable.
+            "best_distance": min((hit.distance for hit in hit_lists[0]), default=None),
         }
         return ToolOutcome(format_results(query, hits, alternatives), details=details)
 

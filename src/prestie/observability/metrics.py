@@ -179,16 +179,21 @@ def _time_split(traces: Sequence[Trace]) -> dict[str, float | None]:
     }
 
 
+def _best_distance(details: Mapping[str, Any]) -> float | None:
+    """The main query's best distance; older traces only have the results,
+    whose distances may come from different queries after fusion."""
+    if "best_distance" in details:
+        return details["best_distance"]
+    return min((r["distance"] for r in details.get("results", ())), default=None)
+
+
 def _worst_covered(traces: Sequence[Trace], limit: int) -> tuple[CorpusGap, ...]:
     gaps = [
         CorpusGap(
             question=trace.get("question", ""),
             queries=tuple(tool["details"].get("queries", ())),
             spec=tool["input"].get("spec"),
-            best_distance=min(
-                (r["distance"] for r in tool["details"].get("results", ())),
-                default=None,
-            ),
+            best_distance=_best_distance(tool["details"]),
             trace_id=trace.get("trace_id", ""),
         )
         for trace in traces

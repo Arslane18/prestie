@@ -36,6 +36,10 @@ class SearchHit:
 class KnowledgeStore:
     def __init__(self, collection: Any):
         self._collection = collection
+        # Once the collection holds chunks, searches stop asking Chroma for
+        # its size (one round trip per query, up to 3 per search call). An
+        # empty one is checked again, so a later ingest is picked up.
+        self._has_chunks = False
 
     @classmethod
     def open(
@@ -93,8 +97,10 @@ class KnowledgeStore:
         n_results: int = DEFAULT_RESULTS,
         where: Mapping[str, Any] | None = None,
     ) -> list[SearchHit]:
-        if self.count() == 0:
-            return []
+        if not self._has_chunks:
+            if self.count() == 0:
+                return []
+            self._has_chunks = True
         result = self._collection.query(
             query_embeddings=[list(query_embedding)],
             n_results=n_results,
