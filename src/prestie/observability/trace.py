@@ -80,6 +80,8 @@ class TurnTrace:
     tools: tuple[ToolTrace, ...]
     answer: str
     cost_usd: float | None
+    # The model forgot the sources section and the agent appended it.
+    sources_added: bool = False
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -167,6 +169,7 @@ class _TurnState:
     outcome: str = INTERRUPTED
     error: str | None = None
     answer: str = ""
+    sources_added: bool = False
 
     def record(self, event: AgentEvent, at: float) -> "_TurnState":
         if isinstance(event, TextDelta) and self.first_token_at is None:
@@ -190,7 +193,12 @@ class _TurnState:
             outcome = (
                 REFUSED if reply.refused else TRUNCATED if reply.truncated else ANSWERED
             )
-            return replace(self, outcome=outcome, answer=reply.text)
+            return replace(
+                self,
+                outcome=outcome,
+                answer=reply.text,
+                sources_added=reply.sources_added,
+            )
         return self
 
     def failed(self, message: str) -> "_TurnState":
@@ -226,6 +234,7 @@ class _TurnState:
             tools=self.tools,
             answer=self.answer,
             cost_usd=_cost(self.requests),
+            sources_added=self.sources_added,
         )
 
 

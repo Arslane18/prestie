@@ -26,8 +26,9 @@ from typing import Any, Protocol
 
 import anthropic
 
+from prestie.agent.attribution import missing_sources_section
 from prestie.agent.context import compact_history
-from prestie.agent.tools import ToolOutcome
+from prestie.agent.tools import SEARCH_TOOL_NAME, ToolOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,9 @@ class AgentReply:
     messages: tuple[dict[str, Any], ...] = ()
     # Model that actually served each request (may differ after a fallback).
     models: tuple[str, ...] = ()
+    # The model forgot the Icy Veins sources section and the agent added it
+    # (`text` includes it; the history keeps what the model wrote).
+    sources_added: bool = False
 
 
 class AgentError(Exception):
@@ -204,6 +208,7 @@ class Agent:
         usage = Usage()
         models: tuple[str, ...] = ()
         tool_rounds = 0
+        searches: tuple[Mapping[str, Any], ...] = ()  # details, for attribution
 
         while True:
             started = self._clock()
@@ -250,6 +255,8 @@ class Agent:
                 yield ToolCallFinished(
                     call, outcome.is_error, self._clock() - started, outcome.details
                 )
+                if call.name == SEARCH_TOOL_NAME and not outcome.is_error:
+                    searches = (*searches, outcome.details)
                 results.append(_tool_result(block, outcome))
             # All results of one round go back in a single user message.
             turn = (*turn, {"role": "user", "content": results})
@@ -258,14 +265,20 @@ class Agent:
         # A truncated tool_use without its tool_result would make the next request invalid.
         if not (truncated and _has_tool_use(content)):
             self._history = (*self._history, *turn)
+        text = _text(response.content)
+        # A cut-off answer is not completed: it is shown as interrupted.
+        sources = None if truncated else missing_sources_section(text, searches)
+        if sources:
+            yield TextDelta(sources)
         yield TurnFinished(
             AgentReply(
-                _text(response.content),
+                text + (sources or ""),
                 tool_calls,
                 usage,
                 truncated=truncated,
                 messages=turn,
                 models=models,
+                sources_added=bool(sources),
             )
         )
 

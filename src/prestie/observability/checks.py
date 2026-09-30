@@ -16,6 +16,7 @@ ANSWERED = "answered"
 
 INVALID_CITATION = "invalid_citation"  # a cited URL no search returned
 MISSING_SOURCES = "missing_sources"  # searched, answered, no sources section
+SOURCES_ADDED = "sources_added"  # the model forgot them, the agent appended them
 UNFILTERED_SEARCH = "unfiltered_search"  # spec known, search without it
 TOOL_ERROR = "tool_error"
 NOT_ANSWERED = "not_answered"  # error, refusal, truncation or interruption
@@ -31,6 +32,7 @@ def online_flags(trace: Mapping[str, Any]) -> tuple[str, ...]:
     checks = (
         (INVALID_CITATION, not _citations_retrieved(answer, searches)),
         (MISSING_SOURCES, answered and bool(searches) and not _has_sources(answer)),
+        (SOURCES_ADDED, bool(trace.get("sources_added"))),
         (
             UNFILTERED_SEARCH,
             spec_known and any(not s["input"].get("spec") for s in searches),

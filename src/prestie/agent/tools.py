@@ -38,8 +38,8 @@ CONTENT_TYPE_DESCRIPTIONS = {
     "mythic_plus": "Mythic+ dungeons: group utility (interrupts, stuns), macros, "
     "affixes",
     "overview": "spec overview, performance ratings, patch changes",
-    "rotation": "full expert rotation per hero talent, opener, cooldowns, threat, "
-    "runes and Runic Power",
+    "rotation": "full expert rotation per hero talent, opener, cooldowns, "
+    "resource management, threat",
     "stat_priority": "secondary stat priority per hero talent, stat breakdown, "
     "diminishing returns",
     "talents": "talent builds for raid, Mythic+ and delves, import strings, hero "
@@ -61,7 +61,8 @@ SEARCH_TOOL: dict[str, Any] = {
         "Semantic search over Icy Veins guides (English, patch 12.1) for every "
         "class and specialization. Returns the most relevant guide passages with "
         "their section name and source URL. Use it for any question about "
-        "rotation, talents, stats, cooldowns, mechanics, leveling or Mythic+. "
+        "rotation, talents, stats, cooldowns, mechanics, leveling, Mythic+ or "
+        "gear (gems, enchants, consumables). "
         "Phrase the query in English with English spell names. Call it several "
         "times with different queries when a question covers several topics."
     ),
@@ -71,7 +72,7 @@ SEARCH_TOOL: dict[str, Any] = {
             "query": {
                 "type": "string",
                 "description": "What to look for, in English, e.g. 'secondary stat "
-                "priority San'layn' or 'when to use Vampiric Blood'.",
+                "priority Frostfire' or 'when to use Power Infusion'.",
             },
             "alternative_queries": {
                 "type": "array",
@@ -88,9 +89,8 @@ SEARCH_TOOL: dict[str, Any] = {
                 "type": "string",
                 "enum": SPEC_KEYS,
                 "description": "Only search this spec's guides. Set it to the "
-                "player's spec (from the player context or get_character_state) "
-                "unless the question is about another spec; without it, passages "
-                "from every spec compete.",
+                "player's spec unless the question is about another spec; without "
+                "it, passages from every spec compete.",
             },
             "content_type": {
                 "type": "string",
@@ -160,6 +160,7 @@ def _hit_details(hit: SearchHit) -> dict[str, Any]:
     return {
         "section": hit.metadata.get("section"),
         "source_url": hit.metadata.get("source_url"),
+        "title": hit.metadata.get("title"),  # guide title, for attribution
         "distance": hit.distance,
     }
 
