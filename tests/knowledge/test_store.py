@@ -114,3 +114,43 @@ def test_search_can_combine_metadata_filters(client):
     )
 
     assert [hit.id for hit in hits] == ["shadow"]
+
+
+class CountingCollection:
+    """Wraps a Chroma collection and counts count() round trips."""
+
+    def __init__(self, collection):
+        self._collection = collection
+        self.counts = 0
+
+    def count(self):
+        self.counts += 1
+        return self._collection.count()
+
+    def __getattr__(self, name):
+        return getattr(self._collection, name)
+
+
+def test_a_non_empty_collection_is_counted_once_not_per_search(client):
+    store = KnowledgeStore.open(client, embedding_model=MODEL)
+    store.replace_page(
+        "page-a", ids=["a:0"], texts=["x"], embeddings=[[1.0, 0.0]], metadatas=[meta("page-a")]
+    )
+    spy = CountingCollection(store._collection)
+    store = KnowledgeStore(spy)
+
+    for _ in range(3):
+        assert store.search([1.0, 0.0], n_results=1)
+
+    assert spy.counts == 1
+
+
+def test_an_empty_collection_is_checked_again_until_it_is_filled(client):
+    store = KnowledgeStore.open(client, embedding_model=MODEL)
+
+    assert store.search([1.0, 0.0]) == []
+    store.replace_page(
+        "page-a", ids=["a:0"], texts=["x"], embeddings=[[1.0, 0.0]], metadatas=[meta("page-a")]
+    )
+
+    assert [hit.id for hit in store.search([1.0, 0.0], n_results=1)] == ["a:0"]

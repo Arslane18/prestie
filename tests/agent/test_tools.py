@@ -258,13 +258,14 @@ def test_search_details_list_the_queries_and_each_returned_passage():
                 "distance": 0.42,
             }
         ],
+        "best_distance": 0.42,
     }
 
 
 def test_search_without_results_has_empty_details_results():
     outcome = KnowledgeBaseTool(FakeRetriever([])).run({"query": "x"})
 
-    assert outcome.details == {"queries": ["x"], "results": []}
+    assert outcome.details == {"queries": ["x"], "results": [], "best_distance": None}
 
 
 
@@ -303,3 +304,29 @@ def test_search_details_carry_the_guide_title_for_attribution():
     outcome = KnowledgeBaseTool(FakeRetriever([hit])).run({"query": "rotation"})
 
     assert outcome.details["results"][0]["title"] == "Frost Mage Rotation Guide"
+
+
+def test_details_record_the_best_distance_of_the_main_query_alone():
+    def hit(distance, name):
+        return SearchHit(
+            id=name,
+            text="T",
+            metadata={"section": name, "source_url": f"https://iv/{name}"},
+            distance=distance,
+        )
+
+    retriever = PerQueryRetriever(
+        {"threat": [hit(0.7, "a"), hit(0.8, "b")], "tanking": [hit(0.3, "c")]}
+    )
+
+    outcome = KnowledgeBaseTool(retriever).run(
+        {"query": "threat", "alternative_queries": ["tanking"]}
+    )
+
+    assert outcome.details["best_distance"] == 0.7
+
+
+def test_a_main_query_without_results_has_no_best_distance():
+    outcome = KnowledgeBaseTool(FakeRetriever([])).run({"query": "x"})
+
+    assert outcome.details["best_distance"] is None

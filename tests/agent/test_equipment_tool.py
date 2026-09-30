@@ -134,3 +134,11 @@ def test_an_empty_off_hand_is_listed_with_a_one_handed_weapon():
 
     assert "off_hand" in text.split("Empty slots:")[1].split("\n")[0]
     assert "two-handed" not in text
+
+
+def test_equipment_details_carry_the_state_served():
+    outcome = run(geared())
+
+    served = outcome.details["served_state"]
+    assert served["snapshot"]["equipment"]["equipped"]
+    assert served["captured_at"] == CAPTURED_AT.isoformat()

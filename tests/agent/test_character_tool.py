@@ -149,3 +149,21 @@ def test_missing_state_is_reported_as_a_tool_error():
 
     assert outcome.is_error
     assert "file not found" in outcome.content
+
+
+# --- review lot E: the trace keeps the state the agent was actually served -----
+
+
+def test_details_carry_the_state_served_in_the_addon_format():
+    outcome = run(FakeSource(make_state()))
+
+    served = outcome.details["served_state"]
+    assert served["snapshot"]["level"] == 83
+    assert served["snapshot"]["spec"] == {"id": 250, "name": "Sang", "role": "TANK"}
+    assert served["captured_at"] == CAPTURED_AT.isoformat()
+
+
+def test_an_unavailable_state_serves_nothing():
+    outcome = run(FakeSource(error=CharacterStateError("not found")))
+
+    assert "served_state" not in outcome.details

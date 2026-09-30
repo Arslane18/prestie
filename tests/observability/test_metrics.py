@@ -204,3 +204,14 @@ def test_player_votes_are_counted_and_thumbs_down_are_flagged():
     assert [(f.question, f.flags) for f in summary.flagged_turns] == [
         ("bof", ("thumbs_down",))
     ]
+
+
+def test_a_gap_uses_the_main_query_distance_when_recorded():
+    # After RRF fusion, results mix distances of different queries: an
+    # alternative phrasing can be closer, hiding how the question itself fares.
+    fused = search("ranged tank", 0.40, alternatives=("tank at range",))
+    fused["details"]["best_distance"] = 0.72
+
+    summary = summarize_traces([trace(question="vague", tools=[fused])], gaps=1)
+
+    assert summary.corpus_gaps[0].best_distance == 0.72

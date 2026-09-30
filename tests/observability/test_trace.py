@@ -225,3 +225,66 @@ def test_the_trace_records_sources_added_by_the_backend():
     [trace] = sink.traces
     assert trace.sources_added is True
     assert trace.to_json()["sources_added"] is True
+
+
+# --- review lot E: the character the agent actually read ------------------------
+
+READ_STATE = ToolCall("get_character_state", {})
+SERVED = {
+    "snapshot": {
+        "character": "Lumina",
+        "level": 90,
+        "class": {"name": "Prêtresse", "file": "PRIEST"},
+        "spec": {"id": 256, "name": "Discipline", "role": "HEALER"},
+        "heroTalent": "Oracle",
+    },
+    "captured_at": "2026-09-29T19:48:00+00:00",
+}
+
+
+def turn_reading_the_state(served=SERVED):
+    yield ToolCallStarted(READ_STATE)
+    yield ToolCallFinished(
+        READ_STATE, is_error=False, duration_s=0.01, details={"served_state": served}
+    )
+    yield TurnFinished(AgentReply("Pénitence."))
+
+
+def test_the_trace_keeps_the_state_the_agent_read_not_the_one_at_question_time():
+    sink = MemorySink()
+    start_of_turn = {"character": "Lumina", "spec": {"id": 258, "name": "Ombre"}}
+
+    list(
+        recorder(sink, character_snapshot=lambda: start_of_turn).observe(
+            "Ma rotation ?", turn_reading_the_state()
+        )
+    )
+
+    [trace] = sink.traces
+    assert trace.character_snapshot == SERVED["snapshot"]  # /reload mid-turn
+    assert trace.character == {
+        "class": "PRIEST",
+        "spec_id": 256,
+        "spec": "Discipline",
+        "level": 90,
+        "hero_talent": "Oracle",
+        "age_minutes": 12,
+    }
+
+
+def test_the_served_state_is_not_stored_twice_in_the_tool_trace():
+    sink = MemorySink()
+
+    list(recorder(sink).observe("Ma rotation ?", turn_reading_the_state()))
+
+    [trace] = sink.traces
+    assert "served_state" not in trace.tools[0].details
+
+
+def test_without_a_read_the_trace_keeps_the_state_at_question_time():
+    sink = MemorySink()
+
+    list(recorder(sink).observe("Stats ?", answered_turn()))
+
+    [trace] = sink.traces
+    assert trace.character == {"class": "PRIEST", "spec": "Ombre", "level": 90}
