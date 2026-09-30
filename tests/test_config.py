@@ -112,3 +112,48 @@ def test_repr_never_leaks_the_blizzard_secret():
 def test_trace_directory_defaults_under_data_and_can_be_overridden():
     assert load_settings({}).trace_dir == Path("data/traces")
     assert load_settings({"PRESTIE_TRACE_DIR": "/tmp/t"}).trace_dir == Path("/tmp/t")
+
+
+# --- local model (branch feat/local-llm) --------------------------------------
+
+
+def test_the_agent_runs_on_claude_by_default():
+    settings = load_settings({})
+
+    assert settings.llm_provider == "anthropic"
+    assert settings.agent_model == settings.claude_model
+
+
+def test_the_local_model_is_read_from_the_environment():
+    settings = load_settings(
+        {
+            "PRESTIE_LLM": "local",
+            "PRESTIE_LOCAL_LLM_URL": "http://127.0.0.1:9000/v1",
+            "PRESTIE_LOCAL_LLM_MODEL": "qwen3.5-9b-q4",
+            "PRESTIE_LOCAL_LLM_API_KEY": "local-secret",
+            "PRESTIE_LOCAL_LLM_THINKING": "true",
+        }
+    )
+
+    assert settings.llm_provider == "local"
+    assert settings.local_llm_url == "http://127.0.0.1:9000/v1"
+    assert settings.agent_model == "qwen3.5-9b-q4"
+    assert settings.local_llm_api_key == "local-secret"
+    assert settings.local_llm_thinking is True
+    assert "local-secret" not in repr(settings)
+
+
+def test_local_defaults_point_to_llama_server_without_thinking():
+    settings = load_settings({"PRESTIE_LLM": "local"})
+
+    assert settings.local_llm_url == "http://127.0.0.1:8080/v1"
+    assert settings.local_llm_thinking is False
+
+
+@pytest.mark.parametrize(
+    "env",
+    [{"PRESTIE_LLM": "openai"}, {"PRESTIE_LOCAL_LLM_THINKING": "maybe"}],
+)
+def test_invalid_llm_settings_are_rejected(env):
+    with pytest.raises(ConfigError):
+        load_settings(env)

@@ -893,3 +893,22 @@ def test_promote_trace_appends_a_draft_case(tmp_path, monkeypatch, capsys):
     out, err = capsys.readouterr()
     assert "real-20260929-4f3a9c0e" in out
     assert "already" in err
+
+
+# --- local model (branch feat/local-llm) --------------------------------------
+
+
+def test_the_chat_model_follows_the_configured_provider():
+    from prestie.agent.anthropic_model import AnthropicChatModel
+    from prestie.agent.openai_model import OpenAICompatibleChatModel
+    from prestie.config import load_settings
+
+    local = cli.build_chat_model(
+        load_settings({"PRESTIE_LLM": "local", "PRESTIE_LOCAL_LLM_MODEL": "qwen3.5-9b"})
+    )
+    claude = cli.build_chat_model(load_settings({}), client=object())
+
+    assert isinstance(local, OpenAICompatibleChatModel)
+    assert local.model == "qwen3.5-9b"
+    assert isinstance(claude, AnthropicChatModel)
+    assert claude.model == "claude-opus-5"
