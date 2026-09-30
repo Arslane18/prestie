@@ -30,6 +30,8 @@ from prestie.agent.agent import (
     TurnFinished,
 )
 from prestie.agent.anthropic_model import AnthropicChatModel
+from prestie.agent.model import ChatModel
+from prestie.agent.openai_model import OpenAICompatibleChatModel
 from prestie.agent.character_tool import (
     CharacterStateTool,
     ProvidesCharacterState,
@@ -237,12 +239,26 @@ def build_agent(
             ]
         )
     return Agent(
-        AnthropicChatModel(
-            client or build_anthropic_client(settings), settings.claude_model
-        ),
+        build_chat_model(settings, client=client),
         system_prompt=build_system_prompt(player),
         tools=tools,
         on_tool_call=on_tool_call,
+    )
+
+
+def build_chat_model(
+    settings: Settings, *, client: anthropic.Anthropic | None = None
+) -> ChatModel:
+    """Claude through the API (default), or the local llama-server (PRESTIE_LLM)."""
+    if settings.llm_provider == "local":
+        return OpenAICompatibleChatModel(
+            settings.local_llm_url,
+            settings.local_llm_model,
+            api_key=settings.local_llm_api_key,
+            thinking=settings.local_llm_thinking,
+        )
+    return AnthropicChatModel(
+        client or build_anthropic_client(settings), settings.claude_model
     )
 
 
@@ -888,7 +904,7 @@ def _eval_agent(args: argparse.Namespace) -> int:
             variant_dir=args.flow_dir / args.variant,
             reps=args.reps,
             workers=args.workers,
-            expected_model=settings.claude_model,
+            expected_model=settings.agent_model,
             harness_sha=harness_sha,
         )
     except (HarnessChangedError, *KNOWLEDGE_ERRORS) as exc:

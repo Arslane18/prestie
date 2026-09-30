@@ -70,6 +70,24 @@ class FallbackRestart:
 
 
 @dataclass(frozen=True)
+class TextBlock:
+    """An assistant text block, for adapters whose API has no block objects."""
+
+    text: str
+    type: str = "text"
+
+
+@dataclass(frozen=True)
+class ToolUseBlock:
+    """An assistant tool call, in the Anthropic block shape the history uses."""
+
+    id: str
+    name: str
+    input: Mapping[str, Any]
+    type: str = "tool_use"
+
+
+@dataclass(frozen=True)
 class ModelResponse:
     """How one request ended."""
 
