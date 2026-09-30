@@ -212,3 +212,16 @@ def test_any_sink_failure_never_breaks_the_answer(caplog):
 
     assert isinstance(events[-1], TurnFinished)
     assert "float32" in caplog.text
+
+
+def test_the_trace_records_sources_added_by_the_backend():
+    sink = MemorySink()
+
+    def turn_with_added_sources():
+        yield TurnFinished(AgentReply("Hâte.\n\nSources …", sources_added=True))
+
+    list(recorder(sink).observe("Stats ?", turn_with_added_sources()))
+
+    [trace] = sink.traces
+    assert trace.sources_added is True
+    assert trace.to_json()["sources_added"] is True

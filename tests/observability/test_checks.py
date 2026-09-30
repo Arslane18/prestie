@@ -66,3 +66,10 @@ def test_tool_errors_and_unanswered_turns_are_flagged():
     flags = online_flags(turn(answer="", tools=[search(error=True)], outcome="error"))
 
     assert flags == ("tool_error", "not_answered")
+
+
+def test_sources_added_by_the_backend_are_flagged():
+    # The model forgot them: the answer is attributed, but the prompt missed.
+    flags = online_flags({**turn(tools=[search(f"{URL}#fade")]), "sources_added": True})
+
+    assert flags == ("sources_added",)

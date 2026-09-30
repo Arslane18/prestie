@@ -82,7 +82,7 @@ def test_addon_mode_prompt_points_to_the_character_state_tool():
     assert "get_character_state" in prompt
     assert "Do not ask the player" in prompt
     assert "/reload" in prompt
-    assert "only cover the specs listed" in prompt
+    assert "do not cover this class or spec" in prompt
 
 
 def test_manual_mode_prompt_does_not_mention_the_character_state_tool():
@@ -154,3 +154,27 @@ def test_prompt_asks_for_alternative_queries_on_ambiguous_questions():
 
     assert "alternative_queries" in prompt
     assert "several ways" in prompt
+
+
+# --- review lot D: no reference to something the prompt does not contain -----
+
+
+@pytest.mark.parametrize("player", [None, PlayerContext(level=80)])
+def test_prompt_has_no_dangling_references(player):
+    prompt = build_system_prompt(player)
+
+    assert "listed below" not in prompt  # no spec list since every spec is covered
+    assert "player above" not in prompt  # addon mode has no player block above
+    assert "player context above" not in prompt
+
+
+def test_hero_talent_attribution_needs_a_label_in_the_passages():
+    prompt = build_system_prompt(None)
+
+    assert "only when a passage labels it so" in prompt
+
+
+def test_every_search_uses_the_spec_filter():
+    prompt = build_system_prompt(None)
+
+    assert "every search, alternative phrasings and follow-ups included" in prompt

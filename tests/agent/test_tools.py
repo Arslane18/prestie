@@ -251,7 +251,12 @@ def test_search_details_list_the_queries_and_each_returned_passage():
     assert outcome.details == {
         "queries": ["threat", "tanking"],
         "results": [
-            {"section": "Fade Pulling", "source_url": "https://iv/rot#fade", "distance": 0.42}
+            {
+                "section": "Fade Pulling",
+                "source_url": "https://iv/rot#fade",
+                "title": None,
+                "distance": 0.42,
+            }
         ],
     }
 
@@ -260,3 +265,41 @@ def test_search_without_results_has_empty_details_results():
     outcome = KnowledgeBaseTool(FakeRetriever([])).run({"query": "x"})
 
     assert outcome.details == {"queries": ["x"], "results": []}
+
+
+
+# --- review lot D: descriptions for every class, gear included -----------------
+
+
+def test_rotation_page_type_is_not_described_with_one_class_resource():
+    help_text = SEARCH_TOOL["input_schema"]["properties"]["content_type"]["description"]
+    [rotation] = [line for line in help_text.splitlines() if line.startswith("- rotation:")]
+
+    assert "rune" not in rotation.lower()
+
+
+def test_search_description_covers_gear_questions():
+    assert "gear" in SEARCH_TOOL["description"]
+
+
+def test_spec_parameter_does_not_point_to_a_tool_manual_mode_lacks():
+    spec = SEARCH_TOOL["input_schema"]["properties"]["spec"]["description"]
+
+    assert "get_character_state" not in spec
+
+
+def test_search_details_carry_the_guide_title_for_attribution():
+    hit = SearchHit(
+        id="c1",
+        text="T",
+        metadata={
+            "section": "Rotation > Single Target",
+            "source_url": "https://iv/frost-mage-rotation#single",
+            "title": "Frost Mage Rotation Guide",
+        },
+        distance=0.3,
+    )
+
+    outcome = KnowledgeBaseTool(FakeRetriever([hit])).run({"query": "rotation"})
+
+    assert outcome.details["results"][0]["title"] == "Frost Mage Rotation Guide"
