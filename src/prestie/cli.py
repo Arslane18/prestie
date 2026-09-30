@@ -29,6 +29,7 @@ from prestie.agent.agent import (
     ToolCallStarted,
     TurnFinished,
 )
+from prestie.agent.anthropic_model import AnthropicChatModel
 from prestie.agent.character_tool import (
     CharacterStateTool,
     ProvidesCharacterState,
@@ -236,8 +237,9 @@ def build_agent(
             ]
         )
     return Agent(
-        client or build_anthropic_client(settings),
-        model=settings.claude_model,
+        AnthropicChatModel(
+            client or build_anthropic_client(settings), settings.claude_model
+        ),
         system_prompt=build_system_prompt(player),
         tools=tools,
         on_tool_call=on_tool_call,
