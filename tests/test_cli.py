@@ -912,3 +912,16 @@ def test_the_chat_model_follows_the_configured_provider():
     assert local.model == "qwen3.5-9b"
     assert isinstance(claude, AnthropicChatModel)
     assert claude.model == "claude-opus-5"
+
+
+@pytest.mark.parametrize(("thinking", "temperature"), [("true", 1.0), ("false", 0.7)])
+def test_the_local_model_uses_qwen_sampling_for_its_thinking_mode(thinking, temperature):
+    from prestie.agent.openai_model import QWEN3_5_SAMPLING
+    from prestie.config import load_settings
+
+    model = cli.build_chat_model(
+        load_settings({"PRESTIE_LLM": "local", "PRESTIE_LOCAL_LLM_THINKING": thinking})
+    )
+
+    assert model.sampling == QWEN3_5_SAMPLING[thinking == "true"]
+    assert model.sampling["temperature"] == temperature

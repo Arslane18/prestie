@@ -336,3 +336,26 @@ def test_the_agent_runs_a_tool_round_on_the_local_model():
         "content": "PASSAGES",
     }
     assert reply.models == (MODEL, MODEL)
+
+
+# --- sampling ---------------------------------------------------------------------
+
+
+def test_sampling_settings_are_sent_with_the_request():
+    server = FakeServer(sse(chunk({"content": "ok"}, finish="stop")))
+    sampling = {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0}
+
+    run(adapter(server, sampling=sampling))
+
+    body = server.bodies[0]
+    assert {key: body[key] for key in sampling} == sampling
+
+
+def test_without_sampling_settings_the_server_defaults_apply():
+    server = FakeServer(sse(chunk({"content": "ok"}, finish="stop")))
+
+    run(adapter(server))
+
+    assert not {"temperature", "top_p", "top_k", "min_p", "presence_penalty"} & set(
+        server.bodies[0]
+    )

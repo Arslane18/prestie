@@ -31,7 +31,7 @@ from prestie.agent.agent import (
 )
 from prestie.agent.anthropic_model import AnthropicChatModel
 from prestie.agent.model import ChatModel
-from prestie.agent.openai_model import OpenAICompatibleChatModel
+from prestie.agent.openai_model import QWEN3_5_SAMPLING, OpenAICompatibleChatModel
 from prestie.agent.character_tool import (
     CharacterStateTool,
     ProvidesCharacterState,
@@ -256,6 +256,7 @@ def build_chat_model(
             settings.local_llm_model,
             api_key=settings.local_llm_api_key,
             thinking=settings.local_llm_thinking,
+            sampling=QWEN3_5_SAMPLING[settings.local_llm_thinking],
         )
     return AnthropicChatModel(
         client or build_anthropic_client(settings), settings.claude_model

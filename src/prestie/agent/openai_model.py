@@ -46,6 +46,26 @@ SSE_DATA = "data: "
 SSE_DONE = "[DONE]"
 ERROR_PREFIX = "Error: "  # OpenAI tool messages have no error flag
 INVALID_ARGUMENTS_KEY = "_invalid_arguments"
+# Sampling recommended on the Qwen3.5 model card, per thinking mode ("general
+# tasks"). Without them llama-server applies its own defaults (temperature
+# 0.8, top_k 40, min_p 0.05, no presence penalty), which the model was not
+# tuned for. top_k and min_p are llama.cpp extensions to the OpenAI format.
+QWEN3_5_SAMPLING: Mapping[bool, Mapping[str, float]] = {
+    True: {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+    },
+    False: {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+    },
+}
 STOP_REASONS = {
     "stop": "end_turn",
     "tool_calls": "tool_use",
@@ -62,12 +82,15 @@ class OpenAICompatibleChatModel:
         *,
         api_key: str | None = None,
         thinking: bool = False,
+        sampling: Mapping[str, float] | None = None,
         http: httpx.Client | None = None,
     ):
         self._url = f"{base_url.rstrip('/')}/chat/completions"
         self.model = model
         self._api_key = api_key
         self._thinking = thinking
+        # None: the server's defaults apply.
+        self.sampling = dict(sampling or {})
         self._http = http or httpx.Client(timeout=DEFAULT_TIMEOUT_S)
 
     def stream(
@@ -88,6 +111,7 @@ class OpenAICompatibleChatModel:
             "stream_options": {"include_usage": True},
             # llama.cpp passes these to the chat template (Qwen: thinking on/off).
             "chat_template_kwargs": {"enable_thinking": self._thinking},
+            **self.sampling,
             **({} if allow_tools else {"tool_choice": "none"}),
         }
         headers = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
